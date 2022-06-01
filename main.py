@@ -49,8 +49,8 @@ class RouteBuilder:
         self.similarity_vec = 0
         self.distance_vec = None
         self.tags_vec = None
-        if len(self.chosen_idx) > 0:
-            self.last_idx = self.chosen_idx[-1]
+        #if len(self.chosen_idx) > 0:
+            #self.last_idx = self.chosen_idx[-1]
 
     def first_attraction(self):
         """
@@ -399,6 +399,7 @@ class RouteBuilder:
         return a dataframe of the selected route
         """
         if self.anchors:
+            self.route_with_anchors()
             print("final attractions:", self.chosen_idx)
             return self.idx_to_dataframe()
         else:
@@ -424,17 +425,18 @@ class RouteBuilder:
 
 
 def main():
-    # read files to dataframes
+    # read data files to dataframes
     df = pd.read_csv("berlin_preprocess.csv")
-    df_distances_norm = pd.read_csv("berlin_distances_norm.csv")
-    df_similarity_norm = pd.read_csv("berlin_similarity_norm.csv")
-    df_popularity_vec = pd.read_csv("berlin_popularity_vec.csv")
-    df_tags_vec = pd.read_csv("berlin_tags_vec.csv")
+    df_distances_norm = pd.read_csv("berlin_distances_norm.csv").drop(columns=["Unnamed: 0"])
+    df_similarity_norm = pd.read_csv("berlin_similarity_norm.csv").drop(columns=["Unnamed: 0"])
+    df_popularity_vec = pd.read_csv("berlin_popularity_vec.csv").drop(columns=["Unnamed: 0"])
+    df_popularity_vec = df_popularity_vec.squeeze()
+    #df_tags_vec = pd.read_csv("berlin_tags_vec.csv")
 
     # define parameters
     num_attractions = 7
-    anchors = Anchors({10: 1, 31: 7})
-    chosen_tags = ["Architecture",'Culinary Experiences', "Shopping", "Art", "Urban Parks", "Museums"]
+    anchors = Anchors({30: 1, 31: 7})
+    chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
 
     # select formula weights
     weight_dict = {"popular": 3, "distance": 2, "similarity": 1, "tags": 1}
