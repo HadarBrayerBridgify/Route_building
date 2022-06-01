@@ -427,11 +427,16 @@ class RouteBuilder:
 def main():
     # read data files to dataframes
     df = pd.read_csv("berlin_preprocess.csv")
+
     df_distances_norm = pd.read_csv("berlin_distances_norm.csv").drop(columns=["Unnamed: 0"])
+    df_distances_norm.rename(columns={number: int(number) for number in df_distances_norm.columns}, inplace=True)
+
     df_similarity_norm = pd.read_csv("berlin_similarity_norm.csv").drop(columns=["Unnamed: 0"])
+    df_similarity_norm.rename(columns={number: int(number) for number in df_similarity_norm.columns}, inplace=True)
+
     df_popularity_vec = pd.read_csv("berlin_popularity_vec.csv").drop(columns=["Unnamed: 0"])
     df_popularity_vec = df_popularity_vec.squeeze()
-    #df_tags_vec = pd.read_csv("berlin_tags_vec.csv")
+
 
     # define parameters
     num_attractions = 7
