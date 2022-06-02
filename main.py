@@ -255,7 +255,7 @@ class RouteBuilder:
 
         chosen_idx = list()
         # create a list with the anchors and their chosen attractions idx
-        idx_to_drop = self.chosen_idx.copy() + self.current_anchors.keys_list
+        idx_to_drop = self.chosen_idx.copy() + self.anchors.keys_list
 
         # first anchore:
         # insert the first anchore to chosen_idx
@@ -352,6 +352,7 @@ class RouteBuilder:
         # Verify that the anchors are within range of the number of attractions for the route
         for anchore, position in self.anchors.anchors.items():
             assert position <= self.tot_num_attractions, "The location of the anchor exceeds the amount of attractions"
+            assert position != 0, "The location of the anchor exceeds the amount of attractions"
 
         if self.anchors.num_anchors > 1:
             print("anchore!")
@@ -369,7 +370,7 @@ class RouteBuilder:
             self.chosen_idx = self.attractions_before_anchore(self.chosen_idx)
 
         else:
-            self.chosen_idx = [self.current_anchors.keys_list[0]]
+            self.chosen_idx = [self.anchors.keys_list[0]]
             self.chosen_idx = self.attractions_before_anchore(self.chosen_idx)
 
         # add attractions after anchors
@@ -400,10 +401,12 @@ class RouteBuilder:
         """
         if self.anchors:
             self.route_with_anchors()
+            self.test_route()
             print("final attractions:", self.chosen_idx)
             return self.idx_to_dataframe()
         else:
             self.route_without_anchors()
+            self.test_route()
             print("final attractions:", self.chosen_idx)
             return self.idx_to_dataframe()
 
@@ -440,7 +443,8 @@ def main():
 
     # define parameters
     num_attractions = 7
-    anchors = Anchors({30: 1, 31: 7})
+    #anchors = Anchors({30: 1})
+    anchors = Anchors({15: 2, 31: 6, 12: 4})
     chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
 
     # select formula weights
@@ -452,7 +456,7 @@ def main():
     new_route_df = new_route.build_route()
     print(new_route_df)
 
-#test for git
+
 if __name__ == '__main__':
     main()
 
