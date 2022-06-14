@@ -8,6 +8,7 @@ import argparse
 import datetime
 import numpy as np
 import pandas as pd
+import data_preprocess
 from collections import Counter
 from configparser import ConfigParser
 
@@ -28,6 +29,49 @@ class Anchors:
 
     def num_attrac_between(self, position1, position2):
         return abs(position2 - position1) - 1
+
+
+class Restaurants:
+
+    def __init__(self, df_rest, distances_matrix, rest_location_list):
+        self.df_rest = df_rest
+        self.distances_matrix = distances_matrix
+        self.rest_location_list = rest_location_list
+
+    def norm_df(self, df):
+        return (df - df.min()) / (df.max() - df.min())
+
+    def popularity_vec(self):
+        """
+        return popularity vector. The higher the number of reviews, the lower the result
+        """
+        pop_vec = self.df_rest["number_of_reviews"]
+        norm_vec = 1 - self.norm_df(pop_vec) + 0.01
+        return norm_vec
+
+    def rest_vec(self, last_idx, idx_to_drop=list()):
+        # extract the distances vector from the last attraction
+        rest_dist_vec = self.distances_matrix[last_idx]
+
+        # extract the popularity vector of the restaurants
+        rest_pop_vec = self.popularity_vec()
+
+        # find the best product of the 2 vectors
+        # Multiplication prioritizes distance (very small values) and addition prioritizes popularity ################
+        score = (rest_dist_vec * rest_pop_vec.values)
+        score.drop(index=idx_to_drop, inplace=True)
+        return score
+
+    def best_rest_idx(self, rest_vec):
+        return rest_vec.sort_values().index[0]
+
+    def rest_between_attractions(self, idx1, idx2, idx_to_drop):
+        vec1 = self.rest_vec(idx1, idx_to_drop)
+        vec2 = self.rest_vec(idx2, idx_to_drop)
+        return vec1 + vec2
+
+    def selected_rest(self, selected_idx):
+        return self.df_rest.iloc[selected_idx].T
 
 
 class RouteBuilder:
@@ -209,7 +253,7 @@ class RouteBuilder:
         find the best 2 middle attractions according to both anchors (find the best "20, 30")
         """
         for i in range(5):
-            print(f"itteration {i}")
+            print(f"iteration {i}")
             middle1_position = len(idx_vec) // 2 - 1  # 2
             middle2_position = len(idx_vec) // 2  # 3
             middle1 = idx_vec[middle1_position]  # 20
@@ -392,8 +436,55 @@ class RouteBuilder:
         """
         receive a list of the chosen idx and retrieve the attractions in a dataframe
         """
-        selected_attractions_df = self.df.iloc[self.chosen_idx].drop(columns=["index", "Unnamed: 0"])
+        selected_attractions_df = self.df.iloc[self.chosen_idx].drop(columns=["index"])
         return selected_attractions_df
+
+    def route_with_restaurants(self, rest_instance):
+
+        # create a dataframe of the selected attractions
+        selected_attractions = self.build_route()
+
+        # create a copy of the selected attractions indices
+        route_idx_list = self.chosen_idx.copy()
+        rest_idx_list = list()
+        for loc in rest_instance.rest_location_list:
+            print("loc:", loc)
+            # if restaurant is between attractions
+            if 1 < loc < self.tot_num_attractions + len(rest_instance.rest_location_list):
+                print("between!")
+                rest_idx = rest_instance.best_rest_idx(
+                    rest_instance.rest_between_attractions(route_idx_list[loc - 2], route_idx_list[loc - 1],
+                                                           rest_idx_list))
+
+            else:
+                # if the restaurant is at the end of the route
+                if loc == self.tot_num_attractions + len(rest_instance.rest_location_list):
+                    print("end of route")
+                    rest_idx = rest_instance.best_rest_idx(rest_instance.rest_vec(route_idx_list[-1], rest_idx_list))
+
+                # if the restaurant is at the beginning of the route
+                if loc == 1:
+                    print("beginning")
+                    rest_idx = rest_instance.best_rest_idx(rest_instance.rest_vec(route_idx_list[0], rest_idx_list))
+
+            route_idx_list.insert(loc - 1, 'rest_idx')
+            print("idx list:", route_idx_list)
+            rest_idx_list.append(rest_idx)
+        #rest_dict = {k: v for k, v in zip(rest_instance.rest_location_list, rest_idx_list)}  # {loc1: rest_idx, loc2: rest_idx}
+
+        route_with_rest = pd.DataFrame()
+        from_idx = 0
+        num_loc = 1
+        for loc, idx in zip(rest_instance.rest_location_list, rest_idx_list):
+            selected_rest = pd.DataFrame(rest_instance.df_rest.iloc[idx]).T
+            route_with_rest = pd.concat(
+                [route_with_rest, selected_attractions[from_idx:(loc - num_loc)], selected_rest])
+            from_idx = loc - num_loc
+            num_loc += 1
+
+        route_with_rest = pd.concat([route_with_rest, selected_attractions[from_idx:]])
+        return route_with_rest
+
 
     def build_route(self):
         """
@@ -428,23 +519,37 @@ class RouteBuilder:
 
 
 def main():
-    # read data files to dataframes
-    df = pd.read_csv("berlin_preprocess.csv")
+    # read the restaurants data
+    df_rest = data_preprocess.data_processing("restaurants_berlin.csv")
+    rest_distances_matrix = pd.read_csv("berlin_google_matrices/berlin_rest_distance.csv")
+    rest_distances_matrix.columns = [int(col) if col.isnumeric() else col for col in rest_distances_matrix.columns]
 
-    df_distances_norm = pd.read_csv("berlin_distances_norm.csv").drop(columns=["Unnamed: 0"])
+    # select restaurants' location in the route
+    loc0 = 1
+    loc1 = 4
+    loc2 = 8
+    locs = [loc0, loc1, loc2]
+
+    # define a restaurant instance
+    restaurants = Restaurants(df_rest, rest_distances_matrix, locs)
+
+    # read data files to dataframes
+    df = pd.read_csv("berlin_google_matrices/berlin_preprocess.csv")
+
+    df_distances_norm = pd.read_csv("berlin_google_matrices/berlin_distances_norm.csv").drop(columns=["Unnamed: 0"])
     df_distances_norm.rename(columns={number: int(number) for number in df_distances_norm.columns}, inplace=True)
 
-    df_similarity_norm = pd.read_csv("berlin_similarity_norm.csv").drop(columns=["Unnamed: 0"])
+    df_similarity_norm = pd.read_csv("berlin_google_matrices/berlin_similarity_norm.csv").drop(columns=["Unnamed: 0"])
     df_similarity_norm.rename(columns={number: int(number) for number in df_similarity_norm.columns}, inplace=True)
 
-    df_popularity_vec = pd.read_csv("berlin_popularity_vec.csv").drop(columns=["Unnamed: 0"])
+    df_popularity_vec = pd.read_csv("berlin_google_matrices/berlin_popularity_vec.csv").drop(columns=["Unnamed: 0"])
     df_popularity_vec = df_popularity_vec.squeeze()
 
 
     # define parameters
-    num_attractions = 7
+    num_attractions = 5
     #anchors = Anchors({30: 1})
-    anchors = Anchors({15: 2, 31: 6, 12: 4})
+    anchors = Anchors({15: 2, 31: 5, 12: 4})
     chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
 
     # select formula weights
@@ -453,7 +558,7 @@ def main():
     new_route = RouteBuilder(df, chosen_tags, df_popularity_vec, df_similarity_norm, df_distances_norm,
                              num_attractions, weight_dict, anchors)
 
-    new_route_df = new_route.build_route()
+    new_route_df = new_route.route_with_restaurants(restaurants)
     print(new_route_df)
 
 
