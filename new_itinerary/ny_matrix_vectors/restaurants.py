@@ -14,13 +14,13 @@ with open(
 class Restaurants:
 
     #def __init__(self, df_rest, distances_matrix, rest_location_list, df_tags_weights, RESTAURANTS_TAGS_LIST):
-    def __init__(self, df_rest, distances_matrix, df_tags_weights, RESTAURANTS_TAGS_LIST):
+    def __init__(self, df_rest, distances_matrix, df_tags_weights, RESTAURANTS_TAGS_LIST, uuids_to_drop):
         self.df_rest = df_rest
         self.distances_matrix = distances_matrix.fillna(1)
         #self.rest_location_list = rest_location_list
         self.df_tags_weights = df_tags_weights
         self.RESTAURANTS_TAGS_LIST = RESTAURANTS_TAGS_LIST
-
+        self.uuids_to_drop = uuids_to_drop
         self.rest_with_separated_tags = self.df_tags()
         self.rest_with_separated_tags["uuid"] = self.df_rest.index
         self.rest_with_separated_tags.set_index("uuid", drop=True, inplace=True)
@@ -92,13 +92,16 @@ class Restaurants:
         else:
             pop_weight = 0.2
         score = ((self.vec_scaling(rest_dist_vec) + pop_weight * self.vec_scaling(rest_pop_vec)) * rest_tags_vec)
+        idx_to_drop = list(set(idx_to_drop + self.uuids_to_drop))
         score.drop(index=idx_to_drop, inplace=True)
+        #score.drop(index=self.uuids_to_drop)
         score = score[score != 0]
-
         return score
 
     def best_rest_uuid(self, rest_vec):
         print("scores:\n", rest_vec.sort_values())
+        if rest_vec.sort_values().index[0] in self.uuids_to_drop:
+            print("chosen!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         return rest_vec.sort_values().index[0]
 
     def rest_between_attractions(self, idx1, idx2, idx_to_drop, rest_kind_int):  # rest_kind_int: 'breakfast': 0, 'lunch': 1, 'dinner': 2

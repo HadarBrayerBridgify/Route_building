@@ -94,6 +94,7 @@ class RouteBulider:
     def __init__(self, df, chosen_tags, df_similarity_norm, df_distances_norm, tot_num_attractions,
                  weight_dict, user_dates, availability_df, anchors=False):
         self.df = df
+        self.problematic_uuids = self.find_nan_attractions_uuid()
         # self.tags_vec = tags_vec
         self.chosen_tags = chosen_tags
         self.popularity_vec = self.create_popularity_vec()
@@ -123,14 +124,31 @@ class RouteBulider:
         self.final_route_df = pd.DataFrame()
 
         self.df_similarity_norm.columns = self.df_similarity_norm.index
+        self.all_days_attractions_idx = list()
+        self.all_days_restaurants_idx = list()
+
+
+    def find_nan_attractions_uuid(self) -> List[str]:
+        """
+        Extract the uuids without 'title' and 'description'
+
+        Return:
+            list of uuids
+        """
+        nan_title = self.df["uuid"][self.df["title"].isnull()].values
+        nan_description = self.df["uuid"][self.df["description"].isnull()].values
+        nan_index = list(set(nan_title) & set(nan_description))
+        return nan_index
 
 
     def first_attraction(self):
         """
         return the first attraction according to 2*popularity and chosen tags
         """
-
-        self.chosen_idx = [(self.tags_vec + 2 * self.popularity_vec * self.availability_vec).sort_values().index[0]]
+        vec_result = self.tags_vec + 2 * self.popularity_vec * self.availability_vec
+        vec_result = vec_result.drop(index=self.all_days_attractions_idx)
+        self.chosen_idx = [vec_result.sort_values().index[0]]
+        #self.chosen_idx = [(self.tags_vec + 2 * self.popularity_vec * self.availability_vec).sort_values().index[0]]
 
 
     def vec_scaling(self, vec):
@@ -154,32 +172,33 @@ class RouteBulider:
                           ) * self.duration_vec_norm * self.paid_attrac_vec * self.availability_vec
 
         #print("vector results with zeros:", self.vec_scaling(self.popularity_vec).sort_values())
-        print("popular vec:\n", self.vec_scaling(self.popularity_vec).sort_values()[:10])
-        print("distance vec:\n", self.vec_scaling(self.distance_vec).sort_values()[:10])
-        print("similarity vec:\n", self.vec_scaling(self.similarity_vec).sort_values()[:10])
+        print("popular vec:\n", self.vec_scaling(self.popularity_vec).sort_values()[:10], self.popularity_vec.shape)
+        print("distance vec:\n", self.vec_scaling(self.distance_vec).sort_values()[:10], self.distance_vec.shape)
+        print("similarity vec:\n", self.vec_scaling(self.similarity_vec).sort_values()[:10], self.similarity_vec.shape)
         print("tags vec:\n", self.vec_scaling(self.tags_vec).unique())
-        #
-        # print("uuid popular:\n", self.popularity_vec.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"] )
-        # print("uuid distance:\n", self.distance_vec.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"])
-        # print("uuid similarity:\n", self.similarity_vec.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"])
-        # print("uuid tags:\n", self.tags_vec.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"])
-        #
-        # print("uuid duration:\n", self.duration_vec_norm.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"])
-        # print("uuid paid:\n", self.paid_attrac_vec.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"])
-        # print("uuid availability:\n", self.availability_vec.loc["008926ad-8710-4bc1-8028-cef7a9bad9a0"])
+
+
 
 
         # drop duplicates of the chosen uuids
         duplicates_idx = list()
+        idx_to_drop = list(set(self.all_days_attractions_idx + idx_to_drop))
         for idx in idx_to_drop:
             duplicates = list(self.df_similarity_norm.loc[idx][self.df_similarity_norm.loc[idx] > 0.7].index)
             if len(duplicates) > 1:
                 duplicates.remove(idx)
                 duplicates_idx += duplicates
         idx_to_drop += duplicates_idx
+
+        # remove problematic attractions #
+        relevant_uuids = list(set(vectors_results.index) - set(self.problematic_uuids))
+        vectors_results = vectors_results.loc[relevant_uuids]
         # drop chosen uuids and their duplicates
+        idx_to_drop = list(set(idx_to_drop + self.all_days_attractions_idx))
         vectors_results.drop(index=idx_to_drop, inplace=True)
+        #vectors_results.drop(index=self.all_days_attractions_idx, inplace=True)
         vectors_results = vectors_results[vectors_results.values != 0]
+
         return vectors_results
 
     def next_best(self, score_vector):
@@ -336,7 +355,7 @@ class RouteBulider:
         self.availability_vec = self.availability_per_date[hour]
         print("Successfully updated vectors!")
 
-    def update_sum_duration(self, chosen_uuid):
+    def update_sum_duration(self, chosen_uuid) -> None:
         print("*******sum duration before adding new attraction******:", self.sum_duration)
         df = self.df.copy()
         df.set_index("uuid", drop=True, inplace=True)
@@ -344,14 +363,67 @@ class RouteBulider:
         self.sum_duration += df.loc[chosen_uuid]["hour"].values[0]
         print("*******sum duration after adding new attraction******:", self.sum_duration)
 
+    def availability_user_dates(self) -> Dict[timedelta, DataFrame]:
+        """
+        Create a dictionary with the user dates as keys and availability dataframe for each date as a value
 
-    def attraction_between_anchors(self, vector1, vector2):
+        Return:
+            a dictionary with the user dates as keys and availability dataframe for each date as a value
         """
-        input: 2 vectors with the attraction score according to each anchor
-        output: the best attraction idx between the anchors
-        """
-        print("vector_score:", (vector1 + vector2))
-        return (vector1 + vector2).sort_values().index[0]
+        def convert_time(time_string):
+            date_var = time.strptime(time_string, "%H:%M:%S")
+            return date_var.tm_hour
+
+        def convert_date(date_str):
+            return datetime.strptime(date_str, "%Y-%m-%d")
+
+        # create a new column with the hour as an int
+        self.availability_df["hour"] = self.availability_df["time"].apply(lambda x: convert_time(x))
+        # create a new column of formatted date
+        self.availability_df["formatted_date"] = self.availability_df["date"].apply(lambda x: convert_date(x))
+
+        # from_date = self.user_dates[0]
+        # to_date = self.user_dates[1]
+        #
+        # user_dates = [from_date + timedelta(days=i) for i in range((to_date - from_date).days + 1)]
+
+        # list of all the id attractions
+        list_attractions_id = self.availability_df["attraction_id"].unique()
+
+        # empty dict of the user dates and their availability matrices
+        availability_dict = {date: None for date in self.user_dates}
+        hours = sorted(self.availability_df["hour"].unique())
+
+        for date in self.user_dates:
+
+            # define a matrix with a column of the attractions id
+            availability_per_date = pd.DataFrame(list_attractions_id, columns=["attraction_id"])
+
+            for hour in hours:
+                # extract the selected date and hour from the original availability dataframe
+                hour_availability = self.availability_df[["date", "attraction_id", "hour"]][
+                    (self.availability_df['formatted_date'] == date) & (self.availability_df["hour"] == hour)].drop_duplicates()
+                hour_availability[hour] = 1
+                # merge the specific hour to availability_per_date
+                availability_per_date = pd.merge(availability_per_date, hour_availability, how='left')
+                availability_per_date.fillna(0, inplace=True)
+                availability_per_date.drop(columns=["date", "hour"], inplace=True)
+                #availability_per_date.rename(columns={0: 24}, inplace=True)
+
+            # insert the matrix to the dictionary as a value for its date
+            availability_dict[date] = availability_per_date
+        return availability_dict
+
+    def availability_df_per_date(self, date: str) -> DataFrame:
+        specific_date_availability = self.availability_user_dates_dict[date]
+        specific_date_availability = specific_date_availability.merge(self.df["uuid"], how="outer",
+                                                                      left_on="attraction_id", right_on='uuid')
+        specific_date_availability.drop(columns="attraction_id", inplace=True)
+        specific_date_availability.fillna(1, inplace=True)
+        specific_date_availability.set_index("uuid", drop=True, inplace=True)
+        return specific_date_availability
+
+
 
     def select_attractions_idx(self, num_attractions, chosen_idx,
                                uuids_to_drop):  # idx_to_drop was added mainly for the anchors
@@ -374,12 +446,73 @@ class RouteBulider:
             self.final_route_df = self.uuid_to_df([attraction_uuid], self.final_route_df)
         return chosen_idx
 
-    def idx_to_df(self):
-        # present the selected attractions by order:
-        df_uuid = self.df.copy()
-        df_uuid.set_index("uuid", drop=True, inplace=True)
-        selected_attractions = df_uuid.loc[self.chosen_idx]
-        return selected_attractions
+
+    def route_without_anchors(self):
+        """
+        return idx list of the chosen attractions
+        """
+        # for now, define a daily route
+        date = self.user_dates[0]
+        self.availability_per_date = self.availability_df_per_date(date)
+        self.update_tags_vec([])
+        self.availability_vec = self.availability_per_date[9]
+        self.first_attraction()
+        self.final_route_df = self.uuid_to_df(self.chosen_idx, self.final_route_df)
+        # drop the already selected attraction from the list of attractions (self.chosen_idx)
+        idx_to_drop = self.chosen_idx.copy()
+        self.update_sum_duration(self.chosen_idx)
+        self.update_paid_attrac_duration(self.chosen_idx)
+        return self.select_attractions_idx(self.sum_duration, self.chosen_idx, idx_to_drop)
+
+
+
+    def full_route_without_anchors(self, rest_instance=False):
+        route_dict = dict()
+        for i in range(len(self.user_dates)):
+            if i == 3:
+                print("debug")
+            self.availability_per_date = self.availability_df_per_date(self.user_dates[i])
+            if i != 0:
+                # reset all the vectors
+                self.final_route_df = pd.DataFrame()
+                self.chosen_idx = list()
+                self.duration_vec = self.create_duration_vec()
+                self.duration_vec_norm = None
+                self.paid_attrac_vec = None
+                self.availability_vec = None
+                if len(self.chosen_idx) > 0:
+                    self.last_idx = self.chosen_idx[-1]
+                self.sum_duration = 0
+                self.duration_paid_attrac = 0
+
+                # create new rest instance with a new list of uuids to drop
+                if type(rest_instance) != bool:
+                    rest_instance = rest.Restaurants(rest_instance.df_rest, rest_instance.distances_matrix, rest_instance.df_tags_weights, rest_instance.RESTAURANTS_TAGS_LIST, self.all_days_restaurants_idx)
+
+            if type(rest_instance) != bool:
+                daily_route = self.route_with_restaurants(rest_instance)
+                route_dict[i+1] = daily_route
+                self.all_days_restaurants_idx = list(set(self.all_days_restaurants_idx + list(set(self.final_route_df["uuid"].values) & set(rest_instance.df_rest.index))))
+                self.all_days_attractions_idx += list(set(self.final_route_df["uuid"].values) & set(self.df["uuid"].values))
+                print(f"added {len(daily_route) - 3} attractions")
+                print("len chosen attractions:", len(self.all_days_attractions_idx))
+                print("len chosen restaurants:", len(self.all_days_restaurants_idx))
+            else:
+                daily_route = self.route_without_anchors()
+                route_dict[self.user_dates[i]] = daily_route
+                self.all_days_attractions_idx += list(set(self.final_route_df["uuid"].values) & set(self.df["uuid"].values))
+
+        return route_dict
+
+
+
+    def attraction_between_anchors(self, vector1, vector2):
+        """
+        input: 2 vectors with the attraction score according to each anchor
+        output: the best attraction idx between the anchors
+        """
+        print("vector_score:", (vector1 + vector2))
+        return (vector1 + vector2).sort_values().index[0]
 
     def select_middle_attrac(self, anchors, idx_to_drop=[]):
         """
@@ -576,22 +709,6 @@ class RouteBulider:
         self.attractions_after_anchors(self.chosen_idx)
         print("final idx:", self.chosen_idx)
 
-    def route_without_anchors(self):
-        """
-        return idx list of the chosen attractions
-        """
-        # for now, define a daily route
-        date = self.user_dates[0]
-        self.availability_per_date = self.availability_df_per_date(date)
-        self.update_tags_vec([])
-        self.availability_vec = self.availability_per_date[9]
-        self.first_attraction()
-        self.final_route_df = self.uuid_to_df(self.chosen_idx, self.final_route_df)
-        # drop the already selected attraction from the list of attractions (self.chosen_idx)
-        idx_to_drop = self.chosen_idx.copy()
-        self.update_sum_duration(self.chosen_idx)
-        self.update_paid_attrac_duration(self.chosen_idx)
-        return self.select_attractions_idx(self.sum_duration, self.chosen_idx, idx_to_drop)
 
     def idx_to_dataframe(self):
         """
@@ -622,18 +739,20 @@ class RouteBulider:
         else:
             if len(selected_attractions_df) == 1:
                 selected_attractions_df["start"] = 9.5
-                selected_attractions_df["end"] = 10.5
+                selected_attractions_df["end"] = 9.5 + selected_attractions_df.iloc[-1]["hour"]
             else:
                 selected_attractions_df["start"].iloc[-1] = selected_attractions_df.iloc[-2]["end"] + 0.5
                 selected_attractions_df["end"].iloc[-1] = selected_attractions_df["start"].iloc[-1] + \
                                                           selected_attractions_df["hour"].iloc[-1]
 
-                # if instead of attraction we need to have lunch
-                if 13 < selected_attractions_df["end"].iloc[-1] < 16:
-                    restaurant_start = selected_attractions_df["end"].iloc[-1]
-                    selected_attractions_df = selected_attractions_df.append(
-                        [{"uuid": 0, "title": 0, "hour": 1, "start": restaurant_start, "end": restaurant_start + 1}],
-                        ignore_index=True)
+            # if instead of attraction we need to have lunch
+            end = selected_attractions_df["end"].iloc[-1]
+
+            if 13 <= selected_attractions_df["end"].iloc[-1] < 16:
+                restaurant_start = selected_attractions_df["end"].iloc[-1]
+                selected_attractions_df = selected_attractions_df.append(
+                    [{"uuid": 0, "title": 'Lunch time', "hour": 1, "start": restaurant_start, "end": restaurant_start + 1}],
+                    ignore_index=True)
 
         return selected_attractions_df
 
@@ -643,27 +762,14 @@ class RouteBulider:
         """
         if self.anchors:
             self.route_with_anchors()
-            self.test_route()
+            #self.test_route()
             print("final attractions:", self.chosen_idx)
-            # return self.idx_to_df()
-            return self.final_route_df
+            return self.final_route_df[self.final_route_df["uuid"] != 0]
         else:
             self.route_without_anchors()
-            self.test_route()
+            #self.test_route()
             print("final attractions:", self.chosen_idx)
-            # return self.idx_to_df()
-            return self.final_route_df
-
-    def add_itinerary_hours(self, final_route):
-        final_route["begining"] = None
-        final_route["end"] = None
-        final_route["begining"].iloc[0] = 8
-        final_route["end"].iloc[0] = 9
-
-        for i in range(1, len(final_route)):
-            final_route["begining"].iloc[i] = final_route.iloc[i - 1]["end"] + 0.5
-            final_route["end"].iloc[i] = final_route.iloc[i]["begining"] + final_route.iloc[i]["hour"]
-        return final_route
+            return self.final_route_df[self.final_route_df["uuid"] != 0]
 
 
 
@@ -672,67 +778,14 @@ class RouteBulider:
 
 
 
-    def availability_user_dates(self):
-        def convert_time(time_string):
-            date_var = time.strptime(time_string, "%H:%M:%S")
-            return date_var.tm_hour
 
-        def convert_date(date_str):
-            return datetime.strptime(date_str, "%Y-%m-%d")
 
-        # create a new column with the hour as an int
-        self.availability_df["hour"] = self.availability_df["time"].apply(lambda x: convert_time(x))
-        # create a new column of formatted date
-        self.availability_df["formatted_date"] = self.availability_df["date"].apply(lambda x: convert_date(x))
-
-        from_date = self.user_dates[0]
-        to_date = self.user_dates[1]
-
-        user_dates = [from_date + timedelta(days=i) for i in range((to_date - from_date).days + 1)]
-
-        # list of all the id attractions
-        list_attractions_id = self.availability_df["attraction_id"].unique()
-
-        # empty dict of the user dates and their availability matrices
-        availability_dict = {date: None for date in user_dates}
-        hours = sorted(self.availability_df["hour"].unique())
-
-        for date in user_dates:
-
-            # define a matrix with a column of the attractions id
-            availability_per_date = pd.DataFrame(list_attractions_id, columns=["attraction_id"])
-
-            for hour in hours:
-                # extract the selected date and hour from the original availability dataframe
-                hour_availability = self.availability_df[["date", "attraction_id", "hour"]][
-                    (self.availability_df['formatted_date'] == date) & (self.availability_df["hour"] == hour)].drop_duplicates()
-                hour_availability[hour] = 1
-                # merge the specific hour to availability_per_date
-                availability_per_date = pd.merge(availability_per_date, hour_availability, how='left')
-                availability_per_date.fillna(0, inplace=True)
-                availability_per_date.drop(columns=["date", "hour"], inplace=True)
-                #availability_per_date.rename(columns={0: 24}, inplace=True)
-
-            # insert the matrix to the dictionary as a value for its date
-            availability_dict[date] = availability_per_date
-        return availability_dict
-
-    def availability_df_per_date(self, date: str) -> DataFrame:
-        specific_date_availability = self.availability_user_dates_dict[date]
-        specific_date_availability = specific_date_availability.merge(self.df["uuid"], how="outer",
-                                                                      left_on="attraction_id", right_on='uuid')
-        specific_date_availability.drop(columns="attraction_id", inplace=True)
-        specific_date_availability.fillna(1, inplace=True)
-        specific_date_availability.set_index("uuid", drop=True, inplace=True)
-        return specific_date_availability
 
 
     def route_with_restaurants(self, rest_instance):
 
         # create a dataframe of the selected attractions
         selected_attractions = self.build_route()
-        # selected_attractions = selected_attractions[["title", "hour"]]
-        # selected_attractions.reset_index(drop=False, inplace=True)
 
         # create a copy of the selected attractions indices
         route_uuid_list = self.chosen_idx.copy()
@@ -757,14 +810,13 @@ class RouteBulider:
         rest_uuid = rest_instance.best_rest_uuid(
             rest_instance.rest_between_attractions(attrac_before, attrac_after,
                                                    rest_uuid_list, rest_kind_dict['lunch']))
-        print("chosen rest:", rest_uuid)
         rest_uuid_list.append(rest_uuid)
         # add the chosen restaurant to the route dataframe
         rest_title = rest_instance.df_rest.loc[rest_uuid]["title"]
         self.final_route_df["title"].iloc[lunch_idx] = rest_title
         self.final_route_df["uuid"].iloc[lunch_idx] = rest_uuid
 
-        ## choose the last restaurant for the route
+        ## choose dinner
         rest_uuid = rest_instance.best_rest_uuid(
             rest_instance.rest_vec(route_uuid_list[-1], rest_kind_dict['dinner'], rest_uuid_list))
         rest_uuid_list.append(rest_uuid)
@@ -778,43 +830,48 @@ class RouteBulider:
 
         return self.final_route_df
 
-    def create_map_file(self, selected_attractions, api_key, rest_df, file_name):
-
-        #extract 'geolocation' from attractions df and from restaurant df
+    def create_map_file(self, selected_attractions_dict, api_key, file_name, rest_df):
         rest_df.reset_index(inplace=True)
         if "index" in rest_df.columns:
             rest_df.rename(columns={"index": "uuid"}, inplace=True)
-        selected_attractions_rest_geo = selected_attractions.merge(rest_df[["uuid", "geolocation"]], how="inner")
-        selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
-        rest_uuids = selected_attractions_rest_geo["uuid"].values
-        selected_attractions.set_index("uuid", inplace=True)
-        selected_attractions["geolocation"].loc[rest_uuids] = selected_attractions_rest_geo["geolocation"].values
+        #extract 'geolocation' from attractions df and from restaurant df
+        for k,v in selected_attractions_dict.items():
+            selected_attractions = v
+            selected_attractions_rest_geo = selected_attractions.merge(rest_df[["uuid", "geolocation"]], how="inner")
+            selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
+            rest_uuids = selected_attractions_rest_geo["uuid"].values
+            selected_attractions.set_index("uuid", inplace=True)
+            selected_attractions["geolocation"].loc[rest_uuids] = selected_attractions_rest_geo["geolocation"].values
 
-        #create 'lon' and 'lat' columns
-        selected_attractions["lon"] = selected_attractions["geolocation"].apply(
-            lambda x: [float(s) for s in re.findall(r'-?\d+\.?\d*', x)][-2:][0])
-        selected_attractions["lat"] = selected_attractions["geolocation"].apply(
-            lambda x: [float(s) for s in re.findall(r'-?\d+\.?\d*', x)][-2:][1])
+            #create 'lon' and 'lat' columns
+            selected_attractions = selected_attractions[selected_attractions.index != 0]
+            selected_attractions["lon"] = selected_attractions["geolocation"].apply(
+                lambda x: [float(s) for s in re.findall(r'-?\d+\.?\d*', x)][-2:][0])
+            selected_attractions["lat"] = selected_attractions["geolocation"].apply(
+                lambda x: [float(s) for s in re.findall(r'-?\d+\.?\d*', x)][-2:][1])
 
-        # optional colors
-        colors = ["b", "g", "r", "y", "m", "w", "c", "p"]
+            # optional colors
+            #colors = ["b", "g", "r", "y", "m", "w", "c"]
+            colors = ["y" for i in range(selected_attractions.shape[0])]
 
-        latitude_list = selected_attractions["lat"]
-        longitude_list = selected_attractions["lon"]
+            latitude_list = selected_attractions["lat"]
+            longitude_list = selected_attractions["lon"]
 
-        gmap = gmplot.GoogleMapPlotter(latitude_list.mean(), longitude_list.mean(), 11)
-        gmap.scatter(latitude_list, longitude_list, color=random.sample(colors, selected_attractions.shape[0]),
-                     s=60,
-                     ew=2,
-                     marker=True,
-                     symbol='+',
-                     label=[l for l in string.ascii_uppercase[:selected_attractions.shape[0]]])
+            gmap = gmplot.GoogleMapPlotter(latitude_list.mean(), longitude_list.mean(), 11)
+            gmap.scatter(latitude_list, longitude_list, color=random.sample(colors, selected_attractions.shape[0]),
+                         s=60,
+                         ew=2,
+                         marker=True,
+                         symbol='+',
+                         label=[l for l in string.ascii_uppercase[:selected_attractions.shape[0]]])
 
-        # polygon method Draw a polygon with
-        # the help of coordinates
-        gmap.polygon(latitude_list, longitude_list, color='cornflowerblue')
-        gmap.apikey = api_key
-        gmap.draw(file_name)
+            # polygon method Draw a polygon with
+            # the help of coordinates
+            gmap.polygon(latitude_list, longitude_list, color='cornflowerblue')
+            gmap.apikey = api_key
+            gmap.draw(f"day{k}_{file_name}")
+
+
 
     def test_route(self):
         # test if we have duplications
@@ -851,41 +908,48 @@ def main():
     RESTAURANTS_TAGS_LIST = rest.RESTAURANTS_TAGS_LIST
     rest_tags_weights = pd.read_csv(
         r"C:\Users\user\PycharmProjects\bridgify\route_builder\new_itinerary\restaurants_data\tags_weights.csv")
-    # rest_locations = [1, 6, 11]
+
     rest_df = pd.read_csv(
         r"C:\Users\user\PycharmProjects\bridgify\route_builder\new_itinerary\restaurants_data\ny_rest_tagged.csv")
     rest_df.set_index("uuid", drop=True, inplace=True)
+
     rest_distances_norm = pd.read_csv(
         r"C:\Users\user\PycharmProjects\bridgify\route_builder\new_itinerary\restaurants_data\ny_attrac_rest_distances_matrix.csv")
-    rest_distances_norm.set_index("uuid", drop=True, inplace=True)
-    # rest_instance = Restaurants(rest_df, rest_distances_norm, rest_locations, rest_tags_weights, RESTAURANTS_TAGS_LIST)
-    rest_instance = rest.Restaurants(rest_df, rest_distances_norm, rest_tags_weights, RESTAURANTS_TAGS_LIST)
 
-    chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
-    NUM_ATTRACTIONS = 7
-    anchors = Anchors({"565e696f-4a4c-414b-afb4-70c97f094214": 3,
-                       "96fe7ece-ef7d-4c1f-b7fa-ef6b1d5b12a0": 2,
-                       "16149ccd-7b45-453f-981b-114cfb24f2de": 7})  # (idx: location in the route. starts at 1, not 0)
+    rest_distances_norm.set_index("uuid", drop=True, inplace=True)
+    rest_instance = rest.Restaurants(rest_df, rest_distances_norm, rest_tags_weights, RESTAURANTS_TAGS_LIST, [])
+
+    #chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
+    chosen_tags = ["Museums", "Urban Parks", "Shows/Performance"]
+
+    ATTRACTIONS_DURATION = 7
+    # anchors = Anchors({"565e696f-4a4c-414b-afb4-70c97f094214": 3,
+    #                    "96fe7ece-ef7d-4c1f-b7fa-ef6b1d5b12a0": 2,
+    #                    "16149ccd-7b45-453f-981b-114cfb24f2de": 7})  # (idx: location in the route. starts at 1, not 0)
 
     # select formula weights
-    weight_dict = {"popular": 2, "distance": 4, "similarity": 1, "tags": 0.5}
-    user_dates = (datetime.strptime("2022-10-14", "%Y-%m-%d"), datetime.strptime("2022-10-18", "%Y-%m-%d"))
+    weight_dict = {"popular": 2, "distance": 4, "similarity": 1, "tags": 1}
 
+    # user d
+    from_date = datetime.strptime("2022-10-14", "%Y-%m-%d")
+    to_date = datetime.strptime("2022-10-18", "%Y-%m-%d")
+    #user_dates = (datetime.strptime("2022-10-14", "%Y-%m-%d"), datetime.strptime("2022-10-18", "%Y-%m-%d"))
+    user_dates = [from_date + timedelta(days=i) for i in range((to_date - from_date).days + 1)]
     # new_route = RouteBulider(df_reduced, chosen_tags, df_popularity_vec_or, df_similarity_norm_or, df_distances_norm_or, num_attractions, weight_dict, anchors)
-    new_route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, NUM_ATTRACTIONS,
+    new_route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, ATTRACTIONS_DURATION,
                              weight_dict, user_dates, availability_df)
 
-    # selected_route = new_route.build_route()
-    selected_route = new_route.route_with_restaurants(rest_instance)
-
+    all_days_route = new_route.full_route_without_anchors(rest_instance)
     api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
-    new_route.create_map_file(new_route.final_route_df, api_key, rest_df, "NY_route.html")
+    new_route.create_map_file(all_days_route, api_key, "NY_route.html", rest_df)
+    return all_days_route
 
-    return selected_route
 
 
 if __name__ == "__main__":
     route = main()
-    print(route[["title", "uuid"]])
-    # route["hour"][:2].values.sum()
+    #print(route[["title", "uuid"]])
+    for v in route.values():
+        print(v[["title", "start", "end"]])
+    #print(route)
 
