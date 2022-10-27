@@ -100,8 +100,6 @@ class Restaurants:
 
     def best_rest_uuid(self, rest_vec):
         print("scores:\n", rest_vec.sort_values())
-        if rest_vec.sort_values().index[0] in self.uuids_to_drop:
-            print("chosen!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         return rest_vec.sort_values().index[0]
 
     def rest_between_attractions(self, idx1, idx2, idx_to_drop, rest_kind_int):  # rest_kind_int: 'breakfast': 0, 'lunch': 1, 'dinner': 2

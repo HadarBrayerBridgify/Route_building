@@ -751,12 +751,10 @@ class RouteBulider:
         """
         if self.anchors:
             self.route_with_anchors()
-            #self.test_route()
             print("final attractions:", self.chosen_idx)
             return self.final_route_df[self.final_route_df["uuid"] != 0]
         else:
             self.route_without_anchors()
-            #self.test_route()
             print("final attractions:", self.chosen_idx)
             return self.final_route_df[self.final_route_df["uuid"] != 0]
 
@@ -906,8 +904,8 @@ def main():
     rest_distances_norm.set_index("uuid", drop=True, inplace=True)
     rest_instance = rest.Restaurants(rest_df, rest_distances_norm, rest_tags_weights, RESTAURANTS_TAGS_LIST, [])
 
-    chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
-    #chosen_tags = ["Museums", "Urban Parks", "Shows/Performance"]
+    #chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
+    chosen_tags = ["Museums", "Urban Parks", "Shows/Performance"]
 
     ATTRACTIONS_DURATION = 7
     # anchors = Anchors({"565e696f-4a4c-414b-afb4-70c97f094214": 3,
@@ -915,7 +913,7 @@ def main():
     #                    "16149ccd-7b45-453f-981b-114cfb24f2de": 7})  # (idx: location in the route. starts at 1, not 0)
 
     # select formula weights
-    weight_dict = {"popular": 2, "distance": 4, "similarity": 1, "tags": 1}
+    weight_dict = {"popular": 0, "distance": 4, "similarity": 1, "tags": 2}
 
     # user d
     from_date = datetime.strptime("2022-10-14", "%Y-%m-%d")

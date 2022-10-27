@@ -1,0 +1,34 @@
+{
+"ATTRACTIONS_PATH":
+{
+  "ny": "new_york_attractions.csv",
+  "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_attractions.csv"
+},
+"AVAILABILITY_PATH":
+{
+  "ny":"availability_newyork.csv",
+  "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_availability.csv"
+},
+  "DISTANCE_PATH":
+  {
+    "ny": "ny_distance_norm.csv",
+    "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_distances_matrix.csv"
+  },
+  "SIMILARITY_PATH":
+  {
+    "ny": "ny_similarity_norm.csv",
+    "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_similarity_matrix.csv"
+  },
+  "REST_PATH":
+  {
+    "ny": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\restaurants_data\\ny_rest_tagged.csv",
+    "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_restaurants_tagged.csv"
+  },
+  "REST_DISTANCE_PATH":
+  {
+    "ny": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\restaurants_data\\ny_attrac_rest_distances_matrix.csv",
+    "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_rest_attrac_dist_matrix.csv"
+  },
+  "REST_TAGS_WEIGHTS_PATH": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\restaurants_data\\tags_weights.csv"
+
+}
