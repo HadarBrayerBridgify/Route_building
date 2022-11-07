@@ -13,7 +13,6 @@ with open(
 
 class Restaurants:
 
-    #def __init__(self, df_rest, distances_matrix, rest_location_list, df_tags_weights, RESTAURANTS_TAGS_LIST):
     def __init__(self, df_rest, distances_matrix, df_tags_weights, RESTAURANTS_TAGS_LIST, uuids_to_drop):
         self.df_rest = df_rest
         self.distances_matrix = distances_matrix.fillna(1)
@@ -140,28 +139,6 @@ class Restaurants:
             return create_vector("dinner")
 
 
-def df_tags(df: DataFrame, tag_col: str, tags_lst: List[str]) -> DataFrame:
-    """
-    Creating DataFrame with separated column for each category.
-    the rows are paralleled to the ones in the df. For example, if the first attraction
-    has in 'categories_list' ['Art', 'Museums'], df_tags will get 1 in column 'Art' and 1 in 'Museums'
-    while the rest categories will be marked as 0
 
-    Args:
-        df: Dataframe of the attractions
-        tag_col: str, the name of the column with the categories/tags
-        tags_lst: list of all tags
-
-    Return:
-         Dataframe with separated column for each category.
-    """
-    tags_dict = {tag: [] for tag in tags_lst}
-    for tag_name in tags_dict.keys():
-        for tags in df[tag_col]:
-            if tag_name in tags:
-                tags_dict[tag_name].append(1)
-            else:
-                tags_dict[tag_name].append(0)
-    return pd.DataFrame(tags_dict)
 
 

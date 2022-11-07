@@ -10,6 +10,7 @@ from itertools import combinations
 from typing import Any, Dict, List
 from datetime import datetime, date, timedelta
 import time
+
 import data_preprocessing as dp
 import restaurants as rest
 from typing import Dict, List, Tuple
@@ -69,9 +70,10 @@ def data_preprocessing(file_path):
 
 class Anchors:
 
-    def __init__(self, anchors):  # (anchors= {uuid: hour})
+    def __init__(self, anchors: Dict):  # (anchors= {date: {uuid: hour}, date: {uuid:hour})     (anchors= {uuid: (date,hour)})
+
         self.anchors = dict(sorted(anchors.items(), key=lambda x: x[1]))
-        self.keys_list = list(self.anchors.keys())
+        self.uuids = list(self.anchors.keys())
         self.position_list = list(self.anchors.values())
         self.num_anchors = len(anchors)
 
@@ -94,8 +96,8 @@ class Anchors:
 ##### route with restaurants
 class RouteBulider:
 
-    def __init__(self, df, chosen_tags: List, df_similarity_norm, df_distances_norm, tot_num_attractions: float,
-                 weight_dict, user_dates, availability_df, anchors=False):
+    def __init__(self, df, chosen_tags, df_similarity_norm, df_distances_norm, tot_num_attractions,
+                 weight_dict, user_dates, availability_df, anchors=None):
         self.df = df
         self.problematic_uuids = self.find_nan_attractions_uuid()
         # self.tags_vec = tags_vec
@@ -110,6 +112,8 @@ class RouteBulider:
         self.availability_user_dates_dict = self.availability_user_dates()
         self.availability_per_date = None
         self.anchors = anchors
+        if self.anchors:
+            self.anchors_uuids = self.extract_anchors_uuids()
 
         self.current_anchors = dict()
         self.chosen_idx = list()  # np.nan(self.tot_num_attractions)
@@ -131,6 +135,18 @@ class RouteBulider:
         self.all_days_restaurants_idx = list()
 
 
+    def extract_anchors_uuids(self):
+        """
+        Return: list of the uuids of the anchors
+        """
+        uuids_lists = np.array([i.keys() for i in self.anchors.values()])
+        anchors_uuids = []
+        for uuids in uuids_lists:
+            for u in uuids:
+                anchors_uuids.append(u)
+        return anchors_uuids
+
+
     def find_nan_attractions_uuid(self) -> List[str]:
         """
         Extract the uuids without 'title' and 'description'
@@ -149,7 +165,7 @@ class RouteBulider:
         vec_result = self.tags_vec + 2 * self.popularity_vec * self.availability_vec
         vec_result = vec_result.drop(index=self.all_days_attractions_idx)
         self.chosen_idx = [vec_result.sort_values().index[0]]
-        return [vec_result.sort_values().index[0]]
+        #self.chosen_idx = [(self.tags_vec + 2 * self.popularity_vec * self.availability_vec).sort_values().index[0]]
 
 
     def vec_scaling(self, vec):
@@ -185,7 +201,7 @@ class RouteBulider:
         duplicates_idx = list()
         idx_to_drop = list(set(self.all_days_attractions_idx + idx_to_drop))
         for idx in idx_to_drop:
-            duplicates = list(self.df_similarity_norm.loc[idx][self.df_similarity_norm.loc[idx] > 0.65].index)
+            duplicates = list(self.df_similarity_norm.loc[idx][self.df_similarity_norm.loc[idx] > 0.5].index)
             if len(duplicates) > 1:
                 duplicates.remove(idx)
                 duplicates_idx += duplicates
@@ -309,8 +325,25 @@ class RouteBulider:
         duration_vec = self.df[["uuid", "hour"]].set_index("uuid", drop=True)
         return duration_vec
 
-    def create_availability_vec(self, hour: int) -> Series:
-        return self.availability_per_date[hour]
+    def create_availability_vec(self, hour: int, reverse=False) -> Series:
+        """
+        Create availability vector
+
+        Args:
+             hour: float. The hour to check availability or if reverse=True, the hour of the anchore
+        """
+        self.availability_per_date["availability_vec"] = None
+        if reverse:
+            self.availability_per_date["availability_hour"] = self.availability_per_date["hour"].apply(lambda x: round(hour - x))
+            for i in range(self.availability_per_date.shape[0]):
+                col = self.availability_per_date["availability_hour"].iloc[i]
+                if not 8 < col < 23:
+                    self.availability_per_date["availability_vec"].iloc[i] = 0
+                else:
+                    self.availability_per_date["availability_vec"].iloc[i] = self.availability_per_date[col].iloc[i]
+            return self.availability_per_date["availability_vec"]
+        else:
+            return self.availability_per_date[hour]
 
     def create_duration_vec_norm(self, chosen_idx):
         time_left = (self.tot_attractions_duration - self.sum_duration) + 0.5
@@ -338,7 +371,7 @@ class RouteBulider:
             self.duration_paid_attrac += df.loc[chosen_uuid]["hour"].values[0]
             print("paid attractions durations:", self.duration_paid_attrac)
 
-    def update_vectors(self, chosen_uuids, hour):
+    def update_vectors(self, chosen_uuids, hour, reverse=False):
         """
         update the vectors according to chosen_idx (according to the attractions that were chosen)
         """
@@ -355,8 +388,10 @@ class RouteBulider:
         # duration vector norm
         self.duration_vec_norm = self.create_duration_vec_norm(chosen_uuids)
         self.paid_attrac_vec = self.create_paid_attractions_vec()
-        self.availability_vec = self.availability_per_date[hour]
+        #self.availability_vec = self.availability_per_date[hour]
+        self.availability_vec = self.create_availability_vec(hour, reverse)
         print("Successfully updated vectors!")
+
 
     def update_sum_duration(self, chosen_uuid) -> None:
         print("*******sum duration before adding new attraction******:", self.sum_duration)
@@ -368,6 +403,7 @@ class RouteBulider:
             print("added time:", df.loc[chosen_uuid]["hour"].values[0])
             self.sum_duration += df.loc[chosen_uuid]["hour"].values[0]
             print("*******sum duration after adding new attraction******:", self.sum_duration)
+
 
     def availability_user_dates(self) -> Dict[timedelta, DataFrame]:
         """
@@ -421,14 +457,12 @@ class RouteBulider:
         return availability_dict
 
     def availability_df_per_date(self, date: str) -> DataFrame:
-
         specific_date_availability = self.availability_user_dates_dict[date]
-        # merging attractions that are not in availability (like google attractions)
         specific_date_availability = specific_date_availability.merge(self.df["uuid"], how="outer",
                                                                       left_on="attraction_id", right_on='uuid')
         specific_date_availability.drop(columns="attraction_id", inplace=True)
-        # assuming that attractions that are not in the availability are always available
         specific_date_availability.fillna(1, inplace=True)
+        specific_date_availability = specific_date_availability.merge(self.df[["uuid", "hour"]], how="inner", on="uuid")
         specific_date_availability.set_index("uuid", drop=True, inplace=True)
         return specific_date_availability
 
@@ -437,28 +471,55 @@ class RouteBulider:
         return self.df_similarity_norm.loc[uuid][self.df_similarity_norm.loc[uuid] < 1].sort_values(ascending=False)[:5].index
 
 
-    def select_attractions_uuids(self, chosen_idx,
-                                 uuids_to_drop):  # idx_to_drop was added mainly for the anchors
+    def select_attractions_idx(self, attraction_time, end, chosen_uuid,
+                               uuids_to_drop, reverse_order=False):  # idx_to_drop was added mainly for the anchors
+        """
+        choose the order and the uuids of the attractions of the route
 
-        # for i in range(num_attractions):
-        time_left = self.tot_attractions_duration - self.sum_duration
-        while time_left >= 1:
-            hour = round(self.final_route_df["end"].values[-1] + 0.5)
-            self.update_vectors(chosen_idx, hour)
+        Args:
+             attraction_time: Float. The time from which we will select the attractions
+             end: Float. The time when we will finish choosing the attractions
+             chosen_uuid: str. first selected uuid
+             uuids_to_drop: List. List of uuids that the algorithm will not choose
+
+        Return:
+            List of selected uuids (ordered) for the route
+        """
+
+        duration = end - attraction_time
+        df = self.df.set_index("uuid", drop=True)
+
+        while duration >= 1:
+
+            if not reverse_order:
+                attraction_time = round(self.final_route_df["end"].values[-1] + 0.5)
+                if attraction_time >= 20:
+                    return chosen_uuid
+            else:
+                attraction_time = round(self.final_route_df["start"].values[-1] - 0.5)
+                if attraction_time <= 9:
+                    return chosen_uuid
+
+            self.update_vectors(chosen_uuid, attraction_time)
 
             vector_results = self.attractions_score_vec(uuids_to_drop)
             attraction_uuid = self.next_best(vector_results)
+
+            # if no attractions available (are not relevant by the algorithm, for example, too similar to other chosen attractions or not available)
             if not attraction_uuid:
-                return chosen_idx
+                return chosen_uuid
             # append the next index to the indices list
-            chosen_idx.append(attraction_uuid)
-            print("chosen_idx:", chosen_idx)
+            chosen_uuid.append(attraction_uuid)
+            print("chosen_idx:", chosen_uuid)
             uuids_to_drop.append(attraction_uuid)
             self.update_sum_duration([attraction_uuid])
             self.update_paid_attrac_duration([attraction_uuid])
-            time_left = self.tot_attractions_duration - self.sum_duration
-            self.final_route_df = self.uuid_to_df([attraction_uuid], self.final_route_df)
-        return chosen_idx
+            duration -= df.loc[attraction_uuid]["hour"] - 0.5
+            # add the attraction to the final route
+            self.final_route_df = self.uuid_to_df([attraction_uuid], self.final_route_df, start_hour=None, reverse=reverse_order)
+            #self.final_route_df.sort_values(by="start", inplace=True)
+
+        return chosen_uuid
 
 
 
@@ -467,23 +528,25 @@ class RouteBulider:
         return idx list of the chosen attractions
         """
         self.update_tags_vec([])
-        start_first_attraction = 9
-        self.availability_vec = self.availability_per_date[start_first_attraction]
-        first_uuid = self.first_attraction()
+        self.availability_vec = self.availability_per_date[9]
+        self.first_attraction()
         self.final_route_df = self.uuid_to_df(self.chosen_idx, self.final_route_df)
+
         # drop the already selected attraction from the list of attractions (self.chosen_idx)
         idx_to_drop = self.chosen_idx.copy()
         self.update_sum_duration(self.chosen_idx)
         self.update_paid_attrac_duration(self.chosen_idx)
-        self.select_attractions_uuids(self.chosen_idx, idx_to_drop)
-        return self.final_route_df
+        start_hour = self.final_route_df['end'].values[0] + 0.5
+        duration = self.tot_attractions_duration - self.sum_duration
+        end_hour = start_hour + duration
+        return self.select_attractions_idx(start_hour, end_hour, self.chosen_idx, idx_to_drop)
 
 
-    def full_route_without_anchors(self, rest_instance=None):
+    def create_full_route(self, rest_instance=None):
         route_dict = dict()
-        for day in range(len(self.user_dates)):
-            self.availability_per_date = self.availability_df_per_date(self.user_dates[day])
-            if day != 0:
+        for i in range(len(self.user_dates)):
+            self.availability_per_date = self.availability_df_per_date(self.user_dates[i])
+            if i != 0:
                 # reset all the vectors
                 self.final_route_df = pd.DataFrame()
                 self.chosen_idx = list()
@@ -491,26 +554,32 @@ class RouteBulider:
                 self.duration_vec_norm = None
                 self.paid_attrac_vec = None
                 self.availability_vec = None
-                # if len(self.chosen_idx) > 0:
-                #     self.last_idx = self.chosen_idx[-1]
+                if len(self.chosen_idx) > 0:
+                    self.last_idx = self.chosen_idx[-1]
                 self.sum_duration = 0
                 self.duration_paid_attrac = 0
 
                 # create new rest instance with a new list of uuids to drop
                 if rest_instance:
                     rest_instance = rest.Restaurants(rest_instance.df_rest, rest_instance.distances_matrix, rest_instance.df_tags_weights, rest_instance.RESTAURANTS_TAGS_LIST, self.all_days_restaurants_idx)
+            # daily anchors
+            if self.user_dates[i] in self.anchors.keys():
+                daily_anchors = self.anchors[self.user_dates[i]]
+            else:
+                daily_anchors = None
+
 
             if rest_instance:
-                daily_route = self.route_with_restaurants(rest_instance)
-                route_dict[day+1] = daily_route
+                daily_route = self.route_with_restaurants(rest_instance, daily_anchors)
+                route_dict[i+1] = daily_route
                 self.all_days_restaurants_idx = list(set(self.all_days_restaurants_idx + list(set(self.final_route_df["uuid"].values) & set(rest_instance.df_rest.index))))
                 self.all_days_attractions_idx += list(set(self.final_route_df["uuid"].values) & set(self.df["uuid"].values))
                 print(f"added {len(daily_route) - 3} attractions")
                 print("len chosen attractions:", len(self.all_days_attractions_idx))
                 print("len chosen restaurants:", len(self.all_days_restaurants_idx))
             else:
-                daily_route = self.route_without_anchors()
-                route_dict[self.user_dates[day]] = daily_route
+                daily_route = self.build_route(daily_anchors=daily_anchors)
+                route_dict[self.user_dates[i]] = daily_route
                 self.all_days_attractions_idx += list(set(self.final_route_df["uuid"].values) & set(self.df["uuid"].values))
 
         return route_dict
@@ -527,8 +596,11 @@ class RouteBulider:
 
     def select_middle_attrac(self, anchors, idx_to_drop=[]):
         """
-         #input anchors= {position: idx, position: idx}): {0:[10], 2:[40,30]}, the anchore always should be the last item in the list
-         input anchors= {position: idx, position: idx}): {0:[uuid], 2:[uuid,uuid]}, the anchore always should be the last item in the list
+         Args:
+             anchors= {uuid: hour}
+
+        Return:
+            str.
          output: attraction idx between the anchors: (between 10 and 30)
         """
         ## select the attraction in the middle
@@ -602,7 +674,7 @@ class RouteBulider:
 
         chosen_idx = list()
         # create a list with the anchors and their chosen attractions idx
-        idx_to_drop = self.chosen_idx.copy() + self.anchors.keys_list
+        idx_to_drop = self.chosen_idx.copy() + self.anchors.uuids
 
         # first anchore:
         # insert the first anchore to chosen_idx
@@ -611,7 +683,7 @@ class RouteBulider:
         print(chosen_idx)
 
         # selecting attraction/s according to the first anchore
-        chosen_idx = self.select_attractions_uuids(chosen_idx, idx_to_drop)
+        chosen_idx = self.select_attractions_idx(chosen_idx, idx_to_drop)
         first_anchore_idx = chosen_idx.copy()
         print("chosen_idx:", chosen_idx)  # [10, 20]
         print("idx to drop:", idx_to_drop)
@@ -626,8 +698,8 @@ class RouteBulider:
         # self.similarity_vec = 0
 
         # adding attractions according to the second anchore, drop the attractions that were already chosen by the first anchore
-        attractions_anchore2 = self.select_attractions_uuids(chosen_idx,
-                                                             idx_to_drop)  # [10, 20, 50, 40]
+        attractions_anchore2 = self.select_attractions_idx(chosen_idx,
+                                                           idx_to_drop)  # [10, 20, 50, 40]
         # chosen_idx += attractions_anchore2
         second_anchore_idx = chosen_idx[num_attractions_per_anchore + 1:]  # [50, 40]
         print("second_anchore_idx:", second_anchore_idx)
@@ -669,12 +741,12 @@ class RouteBulider:
         """
         select attractions idx before anchore
         """
-        num_attrac_to_select = self.anchors.duration_before()
+        duration_before_anchore = self.anchors.duration_before()
         # Drop off the attractions that have already been selected
         idx_to_drop = chosen_idx
         # reverse chosen_idx in order to choose the "before attractions"
         chosen_idx = chosen_idx[::-1]
-        self.select_attractions_uuids(chosen_idx, idx_to_drop)
+        self.select_attractions_idx(chosen_idx, idx_to_drop)
         # reverse again chosen_idx
         chosen_idx = chosen_idx[::-1]
         return chosen_idx
@@ -686,61 +758,49 @@ class RouteBulider:
         num_attrac_to_select = self.anchors.num_attrac_after(self.tot_attractions_duration)
         # Drop off the attractions that have already been selected
         idx_to_drop = chosen_idx.copy()
-        self.select_attractions_uuids(chosen_idx, idx_to_drop)
+        self.select_attractions_idx(chosen_idx, idx_to_drop)
         return chosen_idx
 
-    def route_with_anchors(self):
+
+    def route_with_anchors(self, anchors_per_date: Dict):
         """
-        select attractions idx for route with anchors
+        select attractions for route with anchors
         """
+        for anchore, hour in anchors_per_date.items():
+            self.final_route_df = self.uuid_to_df([anchore], self.final_route_df, hour)
+            ### select all attractions before the anchore (reversed)
+            # drop the already selected attraction from the list of attractions (self.chosen_idx)
+            uuid_to_drop = [anchore]
+            self.update_sum_duration([anchore])
+            self.update_paid_attrac_duration([anchore])
+            start_route = 9
+            start_anchore = hour
+            duration = hour - start_route
+            start_hour = self.final_route_df['start'].values[0] - duration
+            self.select_attractions_idx(attraction_time=start_hour, end=start_anchore, chosen_uuid=[anchore], uuids_to_drop=self.anchors_uuids, reverse_order=True)
+
+            # reverse self.final_route_df to be in ascending order
+            self.final_route_df = self.final_route_df[::-1]
+            ### select all attractions after the anchore
+            chosen_uuid = list(self.final_route_df["uuid"].values)
+            if 0 in chosen_uuid:
+                chosen_uuid.remove(0)
+            chosen_uuid += self.anchors_uuids
+            end_anchore = self.final_route_df[self.final_route_df["uuid"] == anchore]["end"].values[0]
+            self.select_attractions_idx(attraction_time=end_anchore, end=20, chosen_uuid=chosen_uuid, uuids_to_drop=chosen_uuid, reverse_order=False)
+            self.chosen_idx = list(self.final_route_df["uuid"].values)
+            if 0 in self.chosen_idx:
+                self.chosen_idx.remove(0)
+            return self.final_route_df
 
 
-        if self.anchors.num_anchors > 1:
-            print("anchore!")
 
 
-            self.chosen_idx = [self.anchors.keys_list[0]]
-
-            for i in range(len(self.anchors.keys_list) - 1):
-                # if i != self.anchors.keys_list[-1]:
-                anchors = {self.anchors.keys_list[i]: self.anchors.position_list[i],
-                           self.anchors.keys_list[i + 1]: self.anchors.position_list[i + 1]}
-                print("current anchore:", anchors)
-                self.current_anchors = Anchors(anchors)
-                self.chosen_idx += self.select_attractions_between_anchors()[1:]
-
-            # add attractions before anchors
-            self.chosen_idx = self.attractions_before_anchore(self.chosen_idx)
-        else: # if only 1 anchore
-            anchore_uuid = self.anchors.keys_list[0]
-            anchore_start_hour = self.anchors.position_list[0]
-            self.final_route_df = self.uuid_to_df(anchore_uuid, self.final_route_df, anchore_start_hour)
-            #self.chosen_uuid = [self.anchors.keys_list[0]]
-            self.chosen_idx = self.attractions_before_anchore(self.chosen_idx)
-
-        # add attractions after anchors
-        self.attractions_after_anchors(self.chosen_idx)
-        print("final idx:", self.chosen_idx)
-
-
-    # def idx_to_dataframe(self):
-    #     """
-    #     receive a list of the chosen idx and retrieve the attractions in a dataframe
-    #     """
-    #     df_uuid = self.df.copy()
-    #     df_uuid.set_index("uuid", drop=True)
-    #     selected_attractions = df_uuid.loc[self.chosen_idx].drop(columns=["index", "Unnamed: 0"])
-    #     return selected_attractions
-
-    def uuid_to_df(self, uuid, selected_attractions_df, start_hour=None):
+    def uuid_to_df(self, uuid, selected_attractions_df, start_hour=None, reverse=False):
         """
         extract the row of the chosen uuid from attractions df
-
-        Args:
-            uuid: str. The uuid of the chosen attraction
-            selected_attractions_df: DataFrame of the chosen attractions
-        Return:
-            Updated DataFrame of the chosen attractions
+        :param uuid:
+        :return:
         """
         df_uuid = self.df.copy()
         df_uuid.set_index("uuid", drop=True, inplace=True)
@@ -750,28 +810,37 @@ class RouteBulider:
         selected_attraction["additional_tickets_for_attraction"] = None
         selected_attraction.reset_index(inplace=True)
         selected_attractions_df = pd.concat([selected_attractions_df, selected_attraction], ignore_index=True)
-        if start_hour:
-            selected_attractions_df["start"].iloc[-1] = start_hour
-            selected_attractions_df["end"].iloc[-1] = start_hour + selected_attractions_df.iloc[-1]["hour"]
-
-        else:
-            if len(selected_attractions_df) == 1:
-                hour_of_first_attraction = 9.5
-                selected_attractions_df["start"] = hour_of_first_attraction
-                selected_attractions_df["end"] = hour_of_first_attraction + selected_attractions_df.iloc[-1]["hour"]
+        if len(selected_attractions_df) == 1:
+            if start_hour:
+                selected_attractions_df["start"].iloc[-1] = start_hour
+                selected_attractions_df["end"].iloc[-1] = start_hour + selected_attractions_df.iloc[-1]["hour"]
             else:
+                selected_attractions_df["start"] = 9.5
+                selected_attractions_df["end"] = 9.5 + selected_attractions_df.iloc[-1]["hour"]
+            col = "end"
+        else:
+            if not reverse:
                 selected_attractions_df["start"].iloc[-1] = selected_attractions_df.iloc[-2]["end"] + 0.5
                 selected_attractions_df["end"].iloc[-1] = selected_attractions_df["start"].iloc[-1] + \
                                                           selected_attractions_df["hour"].iloc[-1]
+                col = "end"
+            else:
+                selected_attractions_df["end"].iloc[-1] = selected_attractions_df["start"].iloc[-2] - 0.5
+                selected_attractions_df["start"].iloc[-1] = selected_attractions_df["end"].iloc[-1] - selected_attractions_df["hour"].iloc[-1]
+                col = "start"
 
 
 
         # if instead of attraction we need to have lunch
         end = selected_attractions_df["end"].iloc[-1]
 
-        if 13 <= selected_attractions_df["end"].iloc[-1] < 16:
+        if 13 <= selected_attractions_df[col].iloc[-1] < 16:
             if 0 not in selected_attractions_df["uuid"].values:
-                restaurant_start = selected_attractions_df["end"].iloc[-1]
+                if col == "start": # reverse
+                    restaurant_start = selected_attractions_df[col].iloc[-1] - 1
+                else:
+                    restaurant_start = selected_attractions_df[col].iloc[-1]
+
                 selected_attractions_df = selected_attractions_df.append(
                     [{"uuid": 0, "title": 'Lunch time', "hour": 1, "start": restaurant_start, "end": restaurant_start + 1, "additional_tickets_for_attraction": np.nan}],
                     ignore_index=True)
@@ -779,12 +848,12 @@ class RouteBulider:
         return selected_attractions_df
 
 
-    def build_route(self):
+    def build_route(self, daily_anchors=None):
         """
         return a dataframe of the selected route
         """
-        if self.anchors:
-            self.route_with_anchors()
+        if daily_anchors:
+            self.route_with_anchors(daily_anchors)
             print("final attractions:", self.chosen_idx)
             return self.final_route_df[self.final_route_df["uuid"] != 0]
         else:
@@ -793,12 +862,12 @@ class RouteBulider:
             return self.final_route_df[self.final_route_df["uuid"] != 0]
 
 
-    def route_with_restaurants(self, rest_instance):
+    def route_with_restaurants(self, rest_instance, anchors_per_date=None):
 
         # create a dataframe of the selected attractions
         df_uuid = self.df.copy()
         df_uuid.set_index("uuid", drop=True, inplace=True)
-        selected_attractions = self.build_route()
+        selected_attractions = self.build_route(anchors_per_date)
 
         # add optional tickets for same attraction
         for uuid in selected_attractions["uuid"].values:
@@ -908,7 +977,7 @@ class RouteBulider:
 
         # test the position of each anchore in the selected route
         if self.anchors:
-            for anchore in self.anchors.keys_list:
+            for anchore in self.anchors.uuids:
                 assert self.anchors.anchors[anchore] - 1 == self.chosen_idx.index(
                     anchore), "Anchors not in the right position!"
 
@@ -953,24 +1022,24 @@ def main():
     #chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
     chosen_tags = ["Museums", "Urban Parks", "Shows/Performance"]
     # user dates
-    from_date = datetime.strptime("2022-12-20", "%Y-%m-%d")
-    to_date = datetime.strptime("2022-12-23", "%Y-%m-%d")
+    from_date = datetime.strptime("2022-11-19", "%Y-%m-%d")
+    to_date = datetime.strptime("2022-11-23", "%Y-%m-%d")
     user_dates = [from_date + timedelta(days=i) for i in range((to_date - from_date).days + 1)]
 
     ATTRACTIONS_DURATION = 7
-    # anchors = Anchors({"565e696f-4a4c-414b-afb4-70c97f094214": 3,
+    #anchors = Anchors({"abdc2429-b0b3-4296-83ae-7c648baf564d": 16})
     #                    "96fe7ece-ef7d-4c1f-b7fa-ef6b1d5b12a0": 2,
     #                    "16149ccd-7b45-453f-981b-114cfb24f2de": 7})  # (idx: location in the route. starts at 1, not 0)
 
     # select formula weights
-
+    anchors = {user_dates[0]: {"abdc2429-b0b3-4296-83ae-7c648baf564d": 9.5}, user_dates[2]: {"53c8be37-4023-4c27-a5ab-b309a92eeadb": 12}}
 
 
     # new_route = RouteBulider(df_reduced, chosen_tags, df_popularity_vec_or, df_similarity_norm_or, df_distances_norm_or, num_attractions, weight_dict, anchors)
     new_route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, ATTRACTIONS_DURATION,
-                             weight_dict, user_dates, availability_df)
+                             weight_dict, user_dates, availability_df, anchors=anchors)
 
-    all_days_route = new_route.full_route_without_anchors(rest_instance)
+    all_days_route = new_route.create_full_route()
     api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
     #new_route.create_map_file(all_days_route, api_key, "NY_route.html", rest_df)
     return all_days_route
