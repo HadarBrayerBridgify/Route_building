@@ -87,9 +87,9 @@ class Restaurants:
 
         # if it's lunch, distance factor is very critical factor and therefore popularity factor is given a lower weight than breakfast and dinner
         if rest_kind_int == 1:
-            pop_weight = 0.05
+            pop_weight = 0.0
         else:
-            pop_weight = 0.2
+            pop_weight = 0.0
         score = ((self.vec_scaling(rest_dist_vec) + pop_weight * self.vec_scaling(rest_pop_vec)) * rest_tags_vec)
         idx_to_drop = list(set(idx_to_drop + self.uuids_to_drop))
         score.drop(index=idx_to_drop, inplace=True)

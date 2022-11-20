@@ -219,7 +219,7 @@ class RouteBulider:
 
         tags_dict = {tag: [] for tag in self.chosen_tags}
         for tag_name in tags_dict.keys():
-            for tags in self.df["prediction"]:
+            for tags in self.df["categories_list"]:
                 if tag_name in tags:
                     tags_dict[tag_name].append(1)
                 else:
@@ -922,7 +922,7 @@ def main():
         data_path = json.load(f)
 
     #df = pd.read_csv(ATTRACTIONS_PATH)
-    city="barcelona"
+    city="ny"
     df = pd.read_csv(data_path["ATTRACTIONS_PATH"][city])
 
     # add same ticket similarity
@@ -947,32 +947,24 @@ def main():
     rest_instance = rest.Restaurants(rest_df, rest_distances_norm, rest_tags_weights, RESTAURANTS_TAGS_LIST, [])
 
 
-    weight_dict = {"popular": 2, "distance": 6, "similarity": 1, "tags": 5}
+    weight_dict = {"popular": 1, "distance": 6, "similarity": 1, "tags": 1}
 
     # user onboarding
     #chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
     chosen_tags = ["Museums", "Urban Parks", "Shows/Performance"]
     # user dates
-    from_date = datetime.strptime("2022-12-20", "%Y-%m-%d")
-    to_date = datetime.strptime("2022-12-23", "%Y-%m-%d")
+    from_date = datetime.strptime("2022-11-20", "%Y-%m-%d")
+    to_date = datetime.strptime("2022-11-23", "%Y-%m-%d")
     user_dates = [from_date + timedelta(days=i) for i in range((to_date - from_date).days + 1)]
 
     ATTRACTIONS_DURATION = 7
-    # anchors = Anchors({"565e696f-4a4c-414b-afb4-70c97f094214": 3,
-    #                    "96fe7ece-ef7d-4c1f-b7fa-ef6b1d5b12a0": 2,
-    #                    "16149ccd-7b45-453f-981b-114cfb24f2de": 7})  # (idx: location in the route. starts at 1, not 0)
 
-    # select formula weights
-
-
-
-    # new_route = RouteBulider(df_reduced, chosen_tags, df_popularity_vec_or, df_similarity_norm_or, df_distances_norm_or, num_attractions, weight_dict, anchors)
     new_route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, ATTRACTIONS_DURATION,
                              weight_dict, user_dates, availability_df)
 
     all_days_route = new_route.full_route_without_anchors(rest_instance)
     api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
-    #new_route.create_map_file(all_days_route, api_key, "NY_route.html", rest_df)
+    new_route.create_map_file(all_days_route, api_key, "NY_route.html", rest_df)
     return all_days_route
 
 

@@ -11,7 +11,7 @@
 },
   "DISTANCE_PATH":
   {
-    "ny": "ny_distance_norm.csv",
+    "ny": "ny_distances_matrix.csv",
     "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_distances_matrix.csv"
   },
   "SIMILARITY_PATH":
