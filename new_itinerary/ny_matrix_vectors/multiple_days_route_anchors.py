@@ -1025,7 +1025,7 @@ class RouteBulider:
 
 
 def main():
-    with open('data_path.json') as f:
+    with open('data_path_enosh.json') as f:
         data_path = json.load(f)
 
     # df = pd.read_csv(ATTRACTIONS_PATH)
@@ -1079,7 +1079,7 @@ def main():
 
     all_days_route = new_route.create_full_route(rest_instance)
     api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
-    new_route.create_map_file(all_days_route, api_key, f"{city}_route.html", rest_df)
+    # new_route.create_map_file(all_days_route, api_key, f"{city}_route.html", rest_df)
     return all_days_route
 
 
