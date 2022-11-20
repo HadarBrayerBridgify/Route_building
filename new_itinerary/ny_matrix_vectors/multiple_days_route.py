@@ -888,7 +888,7 @@ class RouteBulider:
                          ew=2,
                          marker=True,
                          symbol='+',
-                         label=[l for l in string.ascii_uppercase[:selected_attractions.shape[0]]])
+                         label=[i+1 for i in range(selected_attractions.shape[0])])
 
             # polygon method Draw a polygon with
             # the help of coordinates

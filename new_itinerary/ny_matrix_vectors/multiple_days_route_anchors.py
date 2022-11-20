@@ -953,22 +953,17 @@ class RouteBulider:
         return self.final_route_df
 
     def create_map_file(self, selected_attractions_dict, api_key, file_name, rest_df=None):
-        if rest_df:
-            rest_df.reset_index(inplace=True)
-            if "index" in rest_df.columns:
-                rest_df.rename(columns={"index": "uuid"}, inplace=True)
+        rest_df.reset_index(inplace=True)
+        if "index" in rest_df.columns:
+            rest_df.rename(columns={"index": "uuid"}, inplace=True)
         # extract 'geolocation' from attractions df and from restaurant df
         for k, v in selected_attractions_dict.items():
             selected_attractions = v
-            if rest_df:
-                selected_attractions_rest_geo = selected_attractions.merge(rest_df[["uuid", "geolocation"]], how="inner")
-                selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
-                rest_uuids = selected_attractions_rest_geo["uuid"].values
-                selected_attractions.set_index("uuid", inplace=True)
-                selected_attractions["geolocation"].loc[rest_uuids] = selected_attractions_rest_geo["geolocation"].values
-
-            else:
-                selected_attractions.set_index("uuid", inplace=True)
+            selected_attractions_rest_geo = selected_attractions.merge(rest_df[["uuid", "geolocation"]], how="inner")
+            selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
+            rest_uuids = selected_attractions_rest_geo["uuid"].values
+            selected_attractions.set_index("uuid", inplace=True)
+            selected_attractions["geolocation"].loc[rest_uuids] = selected_attractions_rest_geo["geolocation"].values
 
             # create 'lon' and 'lat' columns
             selected_attractions = selected_attractions[selected_attractions.index != 0]
@@ -982,24 +977,18 @@ class RouteBulider:
                 continue
             # optional colors
 
-            selected_attractions["rest"] = False
-            for i in range(selected_attractions.shape[0]):
-                if selected_attractions.index[i] in self.df["uuid"].values:
-                    selected_attractions["rest"].iloc[i] = True
-
-            colors = ["y" if selected_attractions["rest"].iloc[i] else "g" for i in range(selected_attractions.shape[0])]
+            colors = ["y" for i in range(selected_attractions.shape[0])]
 
             latitude_list = selected_attractions["lat"]
             longitude_list = selected_attractions["lon"]
 
             gmap = gmplot.GoogleMapPlotter(latitude_list.mean(), longitude_list.mean(), 11)
-            gmap.scatter(latitude_list, longitude_list, color=colors,
+            gmap.scatter(latitude_list, longitude_list, color=random.sample(colors, selected_attractions.shape[0]),
                          s=60,
                          ew=2,
                          marker=True,
                          symbol='+',
-                         label=[i+1 for i in range(selected_attractions.shape[0])])
-
+                         label=[i + 1 for i in range(selected_attractions.shape[0])])
 
             # polygon method Draw a polygon with
             # the help of coordinates
