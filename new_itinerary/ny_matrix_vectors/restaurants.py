@@ -5,8 +5,12 @@ from pandas import DataFrame
 from typing import Dict, List, Any
 
 
+
+with open('data_path_enosh.json') as f:
+    data_path = json.load(f)
+
 with open(
-        r'C:\Users\user\PycharmProjects\bridgify\route_builder\new_itinerary\restaurants_data\tags_dict_restaurants.json') as json_file:
+        data_path["TAGS_DICT_RESTAURANTS"]) as json_file:
     tags_dict = json.load(json_file)
     RESTAURANTS_TAGS_LIST: List = tags_dict.keys()
 
