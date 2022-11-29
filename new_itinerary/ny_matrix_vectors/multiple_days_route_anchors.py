@@ -5,6 +5,7 @@ import string
 import json
 import numpy as np
 import pandas as pd
+from sklearn.cluster import DBSCAN
 from pandas import DataFrame, Series
 from sklearn.preprocessing import StandardScaler
 from itertools import combinations
@@ -15,6 +16,7 @@ import time
 import data_preprocessing as dp
 import restaurants as rest
 from typing import Dict, List, Tuple
+np.random.seed(42)
 
 
 # import restaurants as rest
@@ -55,6 +57,7 @@ class RouteBulider:
     def __init__(self, df, chosen_tags, df_similarity_norm, df_distances, tot_num_attractions,
                  weight_dict, user_dates, availability_df, anchors=None):
         self.df = df
+        self.create_long_lat()
         self.problematic_uuids = self.find_nan_attractions_uuid()
         # self.tags_vec = tags_vec
         self.chosen_tags = chosen_tags
@@ -62,8 +65,11 @@ class RouteBulider:
         self.df_similarity_norm = df_similarity_norm
         self.df_similarity_standard = self.standard_scaler(df_similarity_norm)
         self.df_distances = df_distances
-        self.df_distances_standard = self.standard_scaler(self.df_distances)
-        self.df_distances_norm = self.norm_df(self.df_distances)
+        self.distance_outliers, self.prime_geo = self.anomaly_geolocation(self.df)
+        self.first_attraction_distance_vec = self.create_dist_from_prime_loc(self.prime_geo)
+        self.df_distances_standard = self.standard_scaler(self.df_distances) ##############
+        #self.df_distances_norm = self.create_distance_norm()
+        self.df_distances_norm = self.norm_distance_matrix()
         self.tot_attractions_duration = tot_num_attractions
         self.weight_dict = weight_dict
         self.user_dates = user_dates
@@ -88,10 +94,52 @@ class RouteBulider:
         self.sum_duration = 0
         self.duration_paid_attrac = 0
         self.final_route_df = pd.DataFrame()
-
         self.df_similarity_norm.columns = self.df_similarity_norm.index
         self.all_days_attractions_idx = list()
         self.all_days_restaurants_idx = list()
+
+
+
+    def create_long_lat(self):
+        self.df["geolocation"].fillna(0, inplace=True)
+        self.df["long_lat"] = None
+        empty_idx = self.df[self.df["geolocation"] == 0].index
+        self.df["long_lat"].loc[empty_idx] = 0
+        true_idx = set(self.df.index) - set(empty_idx)
+        self.df["long_lat"].loc[true_idx] = self.df["geolocation"].loc[true_idx].apply \
+            (lambda x: [float(s) for s in re.findall(r'-?\d+\.?\d*', x)][-2:])
+        self.df["long_lat"] = self.df["long_lat"].apply(lambda x: self.insure_long_lat(x))
+        print("created 'lon_lat' col")
+
+
+    def anomaly_geolocation(self, df):
+        uuid_list = []
+        df['correct_geo'] = df['long_lat'].apply(lambda x: self.insure_long_lat(x))
+        uuid_list += list(df[df['geolocation'] == '0']['uuid'])
+        df = df[df['geolocation'] != '0']
+        geos = list(df['correct_geo'])
+        dbscan = DBSCAN(eps=0.6, min_samples=3)
+        dbscan.fit(geos)
+        df['cluster_id'] = list(dbscan.labels_)
+        df_1 = df.groupby('cluster_id')['long_lat'].apply(list).reset_index(name='new')
+        a = list(df['cluster_id'].unique())
+        try:
+            a.remove(-1)
+        except:
+            pass
+        largest_cluster = 0
+        largest_count = 0
+        for i in a:
+            count = len(df[df['cluster_id'] == i])
+            if count > largest_count:
+                largest_cluster = i
+                largest_count = count
+        uuid_list += list(df[df['cluster_id'] != largest_cluster]['uuid'])
+        central_geolocation = [float(sum(col)) / len(col) for col in
+                               zip(*list(df[df['cluster_id'] == largest_cluster]['correct_geo']))]
+        return uuid_list, central_geolocation
+
+
 
     def standard_scaler(self, df):
         scaler = StandardScaler()
@@ -99,6 +147,23 @@ class RouteBulider:
         df_standard.index = df.index
         df_standard.columns = df.columns
         return df_standard
+
+    def norm_distance_matrix(self):
+        """
+        Create normalized distance matrix.
+        outliers will not take into account in the calculation of max value for normalization. They get the value 1 automatically
+        :return:
+        """
+        # replace outliers with 1
+        self.df_distances.loc[self.distance_outliers, self.df_distances.columns] = 0
+        self.df_distances[self.distance_outliers] = 0
+        # norm by max value
+        max_val = self.df_distances.max().max()
+        norm_df = round(self.df_distances / max_val, 3)
+        norm_df.loc[self.distance_outliers][self.df_distances.columns] = 1
+        norm_df[self.distance_outliers] = 1
+        return norm_df
+
 
     def extract_anchors_uuids(self):
         """
@@ -111,6 +176,7 @@ class RouteBulider:
                 anchors_uuids.append(u)
         return anchors_uuids
 
+
     def find_nan_attractions_uuid(self) -> List[str]:
         """
         Extract the uuids without 'title' and 'description'
@@ -121,15 +187,63 @@ class RouteBulider:
         empty_title = self.df["uuid"][self.df["title"] == ""].values
         return empty_title
 
+
+    def insure_long_lat(self, coordinate_list):
+        """
+        relevant only for places in center of earth (in terms of east and west)
+        """
+        if not coordinate_list:
+            return 0
+        if len(coordinate_list) == 1:
+            return 0
+        if abs(coordinate_list[1]) > abs(coordinate_list[0]):
+            return [coordinate_list[1], coordinate_list[0]]
+
+        else:
+            return coordinate_list
+
+
+    def calculate_distance(self, loc1, loc2):
+
+        if type(loc1) != list or type(loc2) != list:
+            dist_score = None
+        elif len(loc1) < 2 or len(loc2) < 2:
+            dist_score = None
+        else:
+            loc1 = self.insure_long_lat(loc1)
+            loc2 = self.insure_long_lat(loc2)
+            dist_score = ((loc1[0] - loc2[0]) ** 2 + (loc1[1] - loc2[1]) ** 2) ** 0.5 * 100
+        return dist_score
+
+
+    def create_dist_from_prime_loc(self, prime_geolocation):
+        #calculate distances
+        df = self.df.set_index("uuid")
+        df["distance_from_prime_location"] = df["long_lat"].apply(lambda x: self.calculate_distance(prime_geolocation, x))
+        df["distance_from_prime_location"].loc[self.distance_outliers] = 0
+        # normalization
+        max_val = df["distance_from_prime_location"].max()
+        df["distance_from_prime_location"].fillna(max_val)
+        df["distance_from_prime_location"] = df["distance_from_prime_location"].apply(lambda x: x/max_val)
+        df["distance_from_prime_location"].loc[self.distance_outliers] = 1
+
+        return df["distance_from_prime_location"]
+
+
     def first_attraction(self):
         """
         return the first attraction according to 2*popularity and chosen tags
         """
-        vec_result = (self.tags_vec + 2 * self.popularity_vec) * self.availability_vec
+        # Avoid choosing first attraction without geolocation
+        #attractions_without_geolocation = list(self.df["uuid"][self.df["long_lat"] == '0'].values)
+
+        #vec_result = (self.tags_vec + 2 * self.popularity_vec + 4 * self.first_attraction_distance_vec) * self.availability_vec
+        vec_result = (0 * self.popularity_vec + 4 * self.first_attraction_distance_vec) * self.availability_vec
+        a = self.popularity_vec.sort_values()
         duplicates = []
         for idx in self.all_days_attractions_idx:
             duplicates += self.drop_too_similar(idx)
-        idx_to_drop = duplicates + self.all_days_attractions_idx
+        idx_to_drop = duplicates + self.all_days_attractions_idx #+ attractions_without_geolocation
         vec_result = vec_result.drop(index=idx_to_drop)
         vec_result = vec_result[vec_result.values != 0]
         vec_sorted = vec_result.sort_values()
@@ -224,28 +338,73 @@ class RouteBulider:
         return tags_df
 
     def create_popularity_vec(self):
+        """
+        The below calculation is per inventory supplier separately.
+        Uniform distribution. Nans and zero number of reviews were taken out from 'reviews_values' and then the uniform
+        distribution was calculated. Nans and zeros got 1.
+        :return:
+        """
         df = self.df.set_index("uuid")
         df["popularity_norm"] = None
+        df["number_of_reviews"] = df["number_of_reviews"].fillna(0)
         for supplier in df["inventory_supplier"].unique():
-            uuids = df[df["inventory_supplier"] == supplier].index
+            uuids = list(df[df["inventory_supplier"] == supplier].index)
             max_reviews = df["number_of_reviews"].loc[uuids].sort_values(ascending=False).values[0]
             if max_reviews == 0:
                 max_reviews = 1
-
             df["popularity_norm"].loc[uuids] = df["number_of_reviews"].loc[uuids].apply(lambda x: x / max_reviews)
-        df["popularity_norm"] = df["popularity_norm"].fillna(0)
 
-        # attrac_with_reviews = df["popularity_norm"][df["popularity_norm"] != 0].sort_values()
-        # attrac_without_reviews = df["popularity_norm"][df["popularity_norm"] == 0]
-        # num_attrac_with_reviews = len(attrac_with_reviews)
-        # norm_values = np.arange(0, 1 + 0.5 * (1 / (num_attrac_with_reviews - 1)), 1 / (num_attrac_with_reviews - 1))
-        # df["popularity_norm"].loc[attrac_with_reviews.index] = norm_values
-        # df["popularity_norm"].loc[attrac_without_reviews.index] = 0.8
+        df["popularity_norm"] = df["popularity_norm"].fillna(0)
+        uuids_without_reviews = list(df["number_of_reviews"][df["number_of_reviews"] == 0].index)
+        uuids_with_reviews = list(set(df.index) - set(uuids_without_reviews))
+        reviews_values = df["number_of_reviews"].loc[uuids_with_reviews]
+        norm_values = np.linspace(0, 1, num=len(reviews_values))
+        norm_popularity_values = [x for _, x in sorted(zip(reviews_values, norm_values))]
+        df["popularity_norm"].loc[uuids_with_reviews] = norm_popularity_values
+
         df["popularity_norm"] = 1 - df["popularity_norm"]
 
-        scaler = StandardScaler()
-        df["popularity_norm"] = scaler.fit_transform(pd.DataFrame(df["popularity_norm"]))
-        return df["popularity_norm"].squeeze()
+        # scaler = StandardScaler()
+        # df["popularity_norm"] = scaler.fit_transform(pd.DataFrame(df["popularity_norm"]))
+        return df["popularity_norm"]
+
+    def create_distance_norm(self):
+        """
+        The below calculation is per inventory supplier separately.
+        Uniform distribution. Nans and zero number of reviews were taken out from 'reviews_values' and then the uniform
+        distribution was calculated. Nans and zeros got 1.
+        :return:
+        """
+
+        distance_np = self.df_distances.to_numpy()
+        size = self.df_distances.shape
+        distance_np = distance_np.reshape(-1)
+        nan_idx_list = np.where(np.isnan(distance_np))[0]
+        zeros_idx_list = np.where(distance_np == 0)[0]
+        extension = np.zeros(len(nan_idx_list) + len(zeros_idx_list))
+        distance_no_nans = distance_np[~np.isnan(distance_np)]
+        distance_no_nans_and_zeros = distance_no_nans[~(distance_no_nans == 0)]
+        norm_values = np.linspace(0, 1, num=len(distance_no_nans_and_zeros))
+        distance_no_nans_norm = [x for _, x in sorted(zip(distance_no_nans_and_zeros, norm_values))]
+        distance_no_nans_norm.extend(extension)
+
+        nan_idx_list = [(x,'nan') for x in nan_idx_list]
+        zeros_idx_list = [(x, 'zero') for x in zeros_idx_list]
+
+        extended_idx_list = nan_idx_list + zeros_idx_list
+        extended_idx_list.sort(key=lambda y: y[0])
+
+        for element in extended_idx_list:
+            if element[1] == 'zero':
+                distance_no_nans_norm[element[0]] = 0
+            else:
+                distance_no_nans_norm[element[0]] = 1
+
+        distance_norm_arr = distance_no_nans_norm[:len(distance_np)]
+        distance_norm_arr = np.array(distance_norm_arr).reshape(size)
+        distance_norm_df = pd.DataFrame(distance_norm_arr, columns=self.df_distances.columns, index=self.df_distances.index)
+        return distance_norm_df
+
 
     def update_tags_vec(self, chosen_idx):
 
@@ -285,7 +444,7 @@ class RouteBulider:
         self.similarity_vec = current_similarity_vec + (1 / 3) * self.similarity_vec
 
     def update_distance_vec(self, chosen_idx):
-        self.distance_vec = self.df_distances_standard.loc[chosen_idx[-1]]
+        self.distance_vec = self.df_distances_norm.loc[chosen_idx[-1]]
         self.distance_vec.index = self.df["uuid"]
         self.distance_vec.fillna(1, inplace=True)
 
@@ -386,7 +545,7 @@ class RouteBulider:
         self.vectors_df = pd.concat([self.tags_vec, self.similarity_vec, self.distance_vec, self.popularity_vec, self.duration_vec_norm, self.paid_attrac_vec, self.availability_vec], axis=1)
         self.vectors_df.columns = ["tag_vec", "similarity_vec", "distance_vec", "popularity_vec", "duration_vec", "paid_attrac_vec", "availability_vec"]
         self.vectors_df.sort_values(by='distance_vec', inplace=True)
-        a = self.vectors_df.loc["f9c068d8-5209-4893-80d2-9d32abba2754"]
+
 
 
 
@@ -953,20 +1112,26 @@ class RouteBulider:
         return self.final_route_df
 
     def create_map_file(self, selected_attractions_dict, api_key, file_name, rest_df=None):
-        rest_df.reset_index(inplace=True)
-        if "index" in rest_df.columns:
-            rest_df.rename(columns={"index": "uuid"}, inplace=True)
+        if rest_df:
+            rest_df.reset_index(inplace=True)
+            if "index" in rest_df.columns:
+                rest_df.rename(columns={"index": "uuid"}, inplace=True)
         # extract 'geolocation' from attractions df and from restaurant df
-        for k, v in selected_attractions_dict.items():
+        for k, v in enumerate(selected_attractions_dict.values()):
             selected_attractions = v
-            selected_attractions_rest_geo = selected_attractions.merge(rest_df[["uuid", "geolocation"]], how="inner")
-            selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
-            rest_uuids = selected_attractions_rest_geo["uuid"].values
-            selected_attractions.set_index("uuid", inplace=True)
-            selected_attractions["geolocation"].loc[rest_uuids] = selected_attractions_rest_geo["geolocation"].values
+            if rest_df:
+                selected_attractions_rest_geo = selected_attractions.merge(rest_df[["uuid", "geolocation"]], how="inner")
+                selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
+                rest_uuids = selected_attractions_rest_geo["uuid"].values
+                selected_attractions.set_index("uuid", inplace=True)
+                selected_attractions["geolocation"].loc[rest_uuids] = selected_attractions_rest_geo["geolocation"].values
+
+            else:
+                selected_attractions = selected_attractions.merge(self.df[["uuid", "geolocation"]], how="left")
+                selected_attractions.set_index("uuid", inplace=True)
+            selected_attractions = selected_attractions[selected_attractions.index != 0]
 
             # create 'lon' and 'lat' columns
-            selected_attractions = selected_attractions[selected_attractions.index != 0]
             try:
                 selected_attractions["lon"] = selected_attractions["geolocation"].apply(
                     lambda x: min([float(s) for s in re.findall(r'-?\d+\.?\d*', x)][-2:]))
@@ -994,7 +1159,7 @@ class RouteBulider:
             # the help of coordinates
             gmap.polygon(latitude_list, longitude_list, color='cornflowerblue')
             gmap.apikey = api_key
-            gmap.draw(f"day{k}_{file_name}")
+            gmap.draw(f"day{k+1}_{file_name}")
 
     def test_route(self):
         # test if we have duplications
@@ -1032,8 +1197,8 @@ def main():
     df_similarity_norm = pd.read_csv(data_path["SIMILARITY_PATH"][city])
     df_similarity_norm.set_index("uuid", drop=True, inplace=True)
     df_similarity_norm.columns = df_similarity_norm.index
-    print(df_distances_norm.loc["63d92816-28ef-4a0f-9303-6796697ec6a8"]["e6a830a7-62d9-4616-8e0c-8791e201a63c"])
-    print(df_similarity_norm.loc["63d92816-28ef-4a0f-9303-6796697ec6a8"]["e6a830a7-62d9-4616-8e0c-8791e201a63c"])
+    print(df_distances_norm.loc["de952fc5-a8f5-41b2-aeea-96d5b5bda975"]["2b4af447-1e57-4b17-8c1e-16f4b814317f"])
+    print(df_similarity_norm.loc["de952fc5-a8f5-41b2-aeea-96d5b5bda975"]["2b4af447-1e57-4b17-8c1e-16f4b814317f"])
     # restaurants
     RESTAURANTS_TAGS_LIST = rest.RESTAURANTS_TAGS_LIST
     rest_tags_weights = pd.read_csv(data_path["REST_TAGS_WEIGHTS_PATH"])
@@ -1042,9 +1207,8 @@ def main():
     rest_distances_norm = pd.read_csv(data_path["REST_DISTANCE_PATH"][city])
     rest_distances_norm.set_index("uuid", drop=True, inplace=True)
     rest_instance = rest.Restaurants(rest_df, rest_distances_norm, rest_tags_weights, RESTAURANTS_TAGS_LIST, [])
-    print(df_similarity_norm.loc["bd3e862e-37cc-4564-bf66-7630827e6830"]["565e696f-4a4c-414b-afb4-70c97f094214"])
-    print(df_distances_norm.loc["bd3e862e-37cc-4564-bf66-7630827e6830"]["565e696f-4a4c-414b-afb4-70c97f094214"])
-    weight_dict = {"popular": 0, "distance": 8, "similarity": 0, "tags": 0}
+
+    weight_dict = {"popular": 0, "distance": 0, "similarity": 0, "tags": 0}
 
     # user onboarding
     # chosen_tags = ["Architecture", "Culinary Experiences", "Shopping", "Art", "Urban Parks", "Museums"]
@@ -1066,9 +1230,9 @@ def main():
     new_route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, ATTRACTIONS_DURATION,
                              weight_dict, user_dates, availability_df, anchors={})
 
-    all_days_route = new_route.create_full_route(rest_instance)
+    all_days_route = new_route.create_full_route()
     api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
-    new_route.create_map_file(all_days_route, api_key, f"{city}_route.html", rest_df)
+    new_route.create_map_file(all_days_route, api_key, f"{city}_route.html")
     return all_days_route
 
 
