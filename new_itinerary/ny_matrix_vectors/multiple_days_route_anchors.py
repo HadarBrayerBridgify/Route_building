@@ -2,6 +2,7 @@ import re
 import gmplot
 import random
 import string
+import pickle
 import json
 import numpy as np
 import pandas as pd
@@ -55,7 +56,7 @@ np.random.seed(42)
 class RouteBulider:
 
     def __init__(self, df, chosen_tags, df_similarity_norm, df_distances, tot_num_attractions,
-                 weight_dict, user_dates, availability_df, anchors=None):
+                 weight_dict, user_dates, availability_df, distance_outliers, prime_geo, anchors=None):
         self.df = df
         self.create_long_lat()
         self.problematic_uuids = self.find_nan_attractions_uuid()
@@ -65,7 +66,9 @@ class RouteBulider:
         self.df_similarity_norm = df_similarity_norm
         self.df_similarity_standard = self.standard_scaler(df_similarity_norm)
         self.df_distances = df_distances
-        self.distance_outliers, self.prime_geo = self.anomaly_geolocation(self.df)
+        #self.distance_outliers, self.prime_geo = self.anomaly_geolocation(self.df)
+        self.distance_outliers = distance_outliers
+        self.prime_geo = prime_geo
         self.first_attraction_distance_vec = self.create_dist_from_prime_loc(self.prime_geo)
         self.df_distances_standard = self.standard_scaler(self.df_distances) ##############
         #self.df_distances_norm = self.create_distance_norm()
@@ -79,7 +82,7 @@ class RouteBulider:
         self.anchors = anchors
         if self.anchors:
             self.anchors_uuids = self.extract_anchors_uuids()
-
+        self.price_vec = self.create_price_vec()
         self.current_anchors = dict()
         self.chosen_idx = list()  # np.nan(self.tot_num_attractions)
         self.similarity_vec = 0
@@ -99,6 +102,19 @@ class RouteBulider:
         self.all_days_restaurants_idx = list()
 
 
+    def create_price_vec(self):
+        df = self.df.set_index("uuid")
+        df["price_level"] = None
+        df["price_vec"] = None
+        df["price"].fillna(0, inplace=True)
+        uuids_without_price = df[df["price"] == 0].index
+        uuids_with_prices = df[df["price"] != 0].index
+        df["price_level"].loc[uuids_with_prices] = pd.qcut(df["price"].loc[uuids_with_prices], q=3, labels=range(3))
+        df["price_level"].loc[uuids_without_price] = 0
+        df["price_vec"] = df["price_level"].apply(lambda x: 0.9 if x == self.weight_dict["price_level"] else 1)
+
+        return df["price_vec"]
+
 
     def create_long_lat(self):
         self.df["geolocation"].fillna(0, inplace=True)
@@ -112,35 +128,35 @@ class RouteBulider:
         print("created 'lon_lat' col")
 
 
-    def anomaly_geolocation(self, df):
-        uuid_list = []
-        df['correct_geo'] = df['long_lat'].apply(lambda x: self.insure_long_lat(x))
-        uuid_list += list(df[df['geolocation'] == '0']['uuid'])
-        uuid_list += list(df[df['geolocation'] == 0]['uuid'])
-        len_uuid_list = len(uuid_list)
-        df = df[df['geolocation'] != '0']
-        df = df[df["geolocation"] != 0]
-        geos = list(df['correct_geo'])
-        dbscan = DBSCAN(eps=0.6, min_samples=3)
-        dbscan.fit(geos)
-        df['cluster_id'] = list(dbscan.labels_)
-        df_1 = df.groupby('cluster_id')['long_lat'].apply(list).reset_index(name='new')
-        a = list(df['cluster_id'].unique())
-        try:
-            a.remove(-1)
-        except:
-            pass
-        largest_cluster = 0
-        largest_count = 0
-        for i in a:
-            count = len(df[df['cluster_id'] == i])
-            if count > largest_count:
-                largest_cluster = i
-                largest_count = count
-        uuid_list += list(df[df['cluster_id'] != largest_cluster]['uuid'])
-        central_geolocation = [float(sum(col)) / len(col) for col in
-                               zip(*list(df[df['cluster_id'] == largest_cluster]['correct_geo']))]
-        return uuid_list, central_geolocation
+    # def anomaly_geolocation(self, df):
+    #     uuid_list = []
+    #     df['correct_geo'] = df['long_lat'].apply(lambda x: self.insure_long_lat(x))
+    #     uuid_list += list(df[df['geolocation'] == '0']['uuid'])
+    #     uuid_list += list(df[df['geolocation'] == 0]['uuid'])
+    #     len_uuid_list = len(uuid_list)
+    #     df = df[df['geolocation'] != '0']
+    #     df = df[df["geolocation"] != 0]
+    #     geos = list(df['correct_geo'])
+    #     dbscan = DBSCAN(eps=0.6, min_samples=3)
+    #     dbscan.fit(geos)
+    #     df['cluster_id'] = list(dbscan.labels_)
+    #     df_1 = df.groupby('cluster_id')['long_lat'].apply(list).reset_index(name='new')
+    #     a = list(df['cluster_id'].unique())
+    #     try:
+    #         a.remove(-1)
+    #     except:
+    #         pass
+    #     largest_cluster = 0
+    #     largest_count = 0
+    #     for i in a:
+    #         count = len(df[df['cluster_id'] == i])
+    #         if count > largest_count:
+    #             largest_cluster = i
+    #             largest_count = count
+    #     uuid_list += list(df[df['cluster_id'] != largest_cluster]['uuid'])
+    #     central_geolocation = [float(sum(col)) / len(col) for col in
+    #                            zip(*list(df[df['cluster_id'] == largest_cluster]['correct_geo']))]
+    #     return uuid_list, central_geolocation
 
 
     def standard_scaler(self, df):
@@ -280,9 +296,8 @@ class RouteBulider:
         """
         vectors_results = (
                                   (self.weight_dict["popular"] * self.popularity_vec) +
-                                  (self.weight_dict["distance"] * self.distance_vec) +
-                                  (self.weight_dict["similarity"] * self.similarity_vec)+1) *\
-        self.tags_vec * self.duration_vec_norm * self.availability_vec * self.paid_attrac_vec
+                                  (self.weight_dict["distance"] * self.distance_vec) + 1) *\
+        self.tags_vec * self.duration_vec_norm * self.availability_vec * self.paid_attrac_vec * self.price_vec
 
 
         # print("vector results with zeros:", self.vec_scaling(self.popularity_vec).sort_values())
@@ -563,7 +578,7 @@ class RouteBulider:
         self.vectors_df.sort_values(by='distance_vec', inplace=True)
         by_popularity = self.vectors_df.sort_values(by='popularity_vec')
         by_tags = self.vectors_df.sort_values(by='tag_vec')
-        check_uuid_results = self.vectors_df.loc['f8aabbd4-bf26-4213-acda-77d8b5dbcceb']
+        #check_uuid_results = self.vectors_df.loc['f8aabbd4-bf26-4213-acda-77d8b5dbcceb']
         print(1)
 
 
@@ -1010,7 +1025,7 @@ class RouteBulider:
         """
         df_uuid = self.df.copy()
         df_uuid.set_index("uuid", drop=True, inplace=True)
-        selected_attraction = df_uuid[["title", "inventory_supplier", "number_of_reviews", "categories_list", "hour"]].loc[uuid]
+        selected_attraction = df_uuid[["title", "inventory_supplier", "number_of_reviews", "categories_list", "hour", "price"]].loc[uuid]
         selected_attraction["start"] = None
         selected_attraction["end"] = None
         selected_attraction["additional_tickets_for_attraction"] = None
@@ -1048,7 +1063,7 @@ class RouteBulider:
 
                 selected_attractions_df = selected_attractions_df.append(
                     [{"uuid": 0, "title": 'Lunch time', "hour": 1, "start": restaurant_start,
-                      "end": restaurant_start + 1, "additional_tickets_for_attraction": np.nan, "categories_list": 'Lunch'}],
+                      "end": restaurant_start + 1, "additional_tickets_for_attraction": np.nan, "categories_list": 'Lunch', "price": None}],
                     ignore_index=True)
 
         return selected_attractions_df
@@ -1195,12 +1210,13 @@ class RouteBulider:
         print("The tests passed successfully!")
 
 
-def main():
+def main(conf: Dict):
     with open('data_path.json') as f:
         data_path = json.load(f)
 
     # df = pd.read_csv(ATTRACTIONS_PATH)
-    city = "barcelona"
+    #city = "ny"
+    city = conf["CITY"]
     df = pd.read_csv(data_path["ATTRACTIONS_PATH"][city])
 
     # add same ticket similarity
@@ -1210,6 +1226,11 @@ def main():
     df_distances_norm = pd.read_csv(data_path["DISTANCE_PATH"][city])
     df_distances_norm.set_index("uuid", drop=True, inplace=True)
     df_distances_norm.columns = df_distances_norm.index
+
+    with open(data_path["OUTLIERS"][city], 'rb') as f:
+        outliers_center_geo = pickle.load(f)
+    outliers = outliers_center_geo[0]
+    center = outliers_center_geo[1]
 
     df_similarity_norm = pd.read_csv(data_path["SIMILARITY_PATH"][city])
     df_similarity_norm.set_index("uuid", drop=True, inplace=True)
@@ -1225,37 +1246,35 @@ def main():
     rest_distances_norm.set_index("uuid", drop=True, inplace=True)
     rest_instance = rest.Restaurants(rest_df, rest_distances_norm, rest_tags_weights, RESTAURANTS_TAGS_LIST, [])
 
-    weight_dict = {"popular": 0, "distance": 0, "similarity": 0, "tags": 1}
-
-    # user onboarding
-    #chosen_tags = ["Museums", "Urban Parks", "Architecture", "Shopping"]
-    chosen_tags = ["Shows & Performances", "Art", "Beach"]
-    # user dates
-    from_date = datetime.strptime("2022-12-15", "%Y-%m-%d")
-    to_date = datetime.strptime("2022-12-15", "%Y-%m-%d")
+    #configurations
+    weight_dict = conf["PARAMETERS_WEIGHTS"]
+    chosen_tags = conf["USER'S_INTERESTS"]
+    from_date = datetime.strptime(conf["USER'S_DATES"][0], "%Y-%m-%d")
+    to_date = datetime.strptime(conf["USER'S_DATES"][1], "%Y-%m-%d")
     user_dates = [from_date + timedelta(days=i) for i in range((to_date - from_date).days + 1)]
+    duration = conf["DURATION"]
+    anchors = conf["ANCHORS"]
 
-    ATTRACTIONS_DURATION = 7
-    # anchors = Anchors({"abdc2429-b0b3-4296-83ae-7c648baf564d": 16})
-    #                    "96fe7ece-ef7d-4c1f-b7fa-ef6b1d5b12a0": 2,
-    #                    "16149ccd-7b45-453f-981b-114cfb24f2de": 7})  # (idx: location in the route. starts at 1, not 0)
-
-    # select formula weights
     #anchors = {user_dates[0]: {"dfb4b276-cda2-4507-8f83-e987aa41151a": 19}}
     #            user_dates[1]: {"53c8be37-4023-4c27-a5ab-b309a92eeadb": 12}}
 
-    new_route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, ATTRACTIONS_DURATION,
-                             weight_dict, user_dates, availability_df, anchors={})
+    route = RouteBulider(df, chosen_tags, df_similarity_norm, df_distances_norm, duration,
+                             weight_dict, user_dates, availability_df, distance_outliers=outliers, prime_geo=center, anchors=anchors)
 
-    all_days_route = new_route.create_full_route()
+    #all_days_route = route.create_full_route()
     api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
-    new_route.create_map_file(all_days_route, api_key, f"{city}_route.html")
-    return all_days_route
+    #new_route.create_map_file(all_days_route, api_key, f"{city}_route.html")
+    return route
 
 
 if __name__ == "__main__":
+    with open('config.json') as config_file:
+        config = json.load(config_file)
+    api_key = 'AIzaSyCoqQ2Vu2yD99PqVlB6A6_8CyKHKSyJDyM'
+    route_object = main(config)
+    route = route_object.create_full_route()
+    route_object.create_map_file(route, api_key, f"{config['CITY']}_route.html")
 
-    route = main()
     for v in route.values():
         print(v[["title", "uuid"]])
         print(v["additional_tickets_for_attraction"])

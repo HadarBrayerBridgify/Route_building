@@ -9,6 +9,10 @@
   "ny":"availability_newyork.csv",
   "barcelona": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\barcelona\\barcelona_availability.csv"
 },
+  "OUTLIERS":
+  {
+    "ny": "C:\\Users\\user\\PycharmProjects\\bridgify\\route_builder\\new_itinerary\\ny_matrix_vectors\\data_creator\\ny_outliers_and_prime_geolocation.pkl"
+  },
   "DISTANCE_PATH":
   {
     "ny": "ny_distances_matrix.csv",
