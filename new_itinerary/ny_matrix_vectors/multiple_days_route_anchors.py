@@ -55,25 +55,22 @@ np.random.seed(42)
 ##### route with restaurants
 class RouteBulider:
 
-    def __init__(self, df, chosen_tags, df_similarity_norm, df_distances, tot_num_attractions,
+    def __init__(self, df, chosen_tags, df_similarity_norm, df_distances, daily_attractions_duration,
                  weight_dict, user_dates, availability_df, distance_outliers, prime_geo, anchors=None):
         self.df = df
         self.create_long_lat()
         self.problematic_uuids = self.find_nan_attractions_uuid()
-        # self.tags_vec = tags_vec
         self.chosen_tags = chosen_tags
         self.popularity_vec = self.create_popularity_vec()
         self.df_similarity_norm = df_similarity_norm
-        self.df_similarity_standard = self.standard_scaler(df_similarity_norm)
+        #self.df_similarity_standard = self.standard_scaler(df_similarity_norm)
         self.df_distances = df_distances
         #self.distance_outliers, self.prime_geo = self.anomaly_geolocation(self.df)
         self.distance_outliers = distance_outliers
         self.prime_geo = prime_geo
         self.first_attraction_distance_vec = self.create_dist_from_prime_loc(self.prime_geo)
-        self.df_distances_standard = self.standard_scaler(self.df_distances) ##############
-        #self.df_distances_norm = self.create_distance_norm()
         self.df_distances_norm = self.norm_distance_matrix()
-        self.tot_attractions_duration = tot_num_attractions
+        self.tot_attractions_duration = daily_attractions_duration
         self.weight_dict = weight_dict
         self.user_dates = user_dates
         self.availability_df = availability_df
@@ -87,13 +84,11 @@ class RouteBulider:
         self.chosen_idx = list()  # np.nan(self.tot_num_attractions)
         self.similarity_vec = 0
         self.distance_vec = None
-        self.tags_vec = self.create_tags_vec()
+        self.tags_vec = self.create_tags_vec([])
         self.duration_vec = self.create_duration_vec()
         self.duration_vec_norm = None
         self.paid_attrac_vec = None
         self.availability_vec = None
-        # if len(self.chosen_idx) > 0:
-        #     self.last_idx = self.chosen_idx[-1]
         self.sum_duration = 0
         self.duration_paid_attrac = 0
         self.final_route_df = pd.DataFrame()
@@ -172,14 +167,14 @@ class RouteBulider:
         outliers will not take into account in the calculation of max value for normalization. They get the value 1 automatically
         :return:
         """
-        # replace outliers with 1
+        # replace outliers with 0
         self.df_distances.loc[self.distance_outliers, self.df_distances.columns] = 0
         self.df_distances[self.distance_outliers] = 0
         # norm by max value
         max_val = self.df_distances.max().max()
         norm_df = round(self.df_distances / max_val, 3)
-        norm_df.loc[self.distance_outliers][self.df_distances.columns] = 1
-        norm_df[self.distance_outliers] = 1
+        norm_df.loc[self.distance_outliers, self.df_distances.columns] = 1.1
+        norm_df[self.distance_outliers] = 1.1
         return norm_df
 
 
@@ -297,7 +292,7 @@ class RouteBulider:
         vectors_results = (
                                   (self.weight_dict["popular"] * self.popularity_vec) +
                                   (self.weight_dict["distance"] * self.distance_vec) + 1) *\
-        self.tags_vec * self.duration_vec_norm * self.availability_vec * self.paid_attrac_vec * self.price_vec
+        self.tags_vec * self.duration_vec_norm * self.availability_vec * self.paid_attrac_vec #* self.price_vec
 
 
         # print("vector results with zeros:", self.vec_scaling(self.popularity_vec).sort_values())
@@ -429,11 +424,32 @@ class RouteBulider:
         return distance_norm_df
 
 
-    def create_tags_vec(self):
+    def create_tags_vec(self, chosen_uuids):
+        """
+
+        Args:
+            chosen_uuids: The selected uuids
+        return:
+            tags vector: series. vector with different values for attraction with tags that are not
+             in self.chosen_tags (value=1), different value for attractions with tags that are in self.chosen_tags
+             but were not selected yet (1-weight*0.1) and different value for attractions with tags
+             that are in self.chosen_tags but were already selected (1-weight*0.05)
+        """
         tags_df = self.df_tags()
+        chosen_tags_df = tags_df.loc[chosen_uuids]
+        chosen_tags_list = list()
+        for col in chosen_tags_df.columns:
+            if chosen_tags_df[col].sum() and col not in chosen_tags_list:
+                chosen_tags_list.append(col)
+
+        for col in tags_df.columns:
+            tags_df[col] = tags_df[col].apply(lambda x: 0.5 if x == 1 and col in chosen_tags_list else x)
+
         tags_df["sum"] = tags_df.sum(axis=1)
         attraction_with_tag = 1 - (0.1 * self.weight_dict["tags"])
-        tags_df["vec"] = tags_df["sum"].apply(lambda x: attraction_with_tag if x > 0 else 1)
+        attraction_with_chosen_tag = 1 - (0.05 * self.weight_dict["tags"])
+        tags_df["vec"] = tags_df["sum"].apply(lambda x: attraction_with_tag if x >= 1 else attraction_with_chosen_tag if x == 0.5 else 1)
+        #tags_df["vec"] = tags_df["sum"].apply(lambda x: attraction_with_tag if x > 0 else 1)
         return tags_df["vec"]
 
 
@@ -555,7 +571,7 @@ class RouteBulider:
         """
         hour = round(hour)
         # update the tags_vector
-        #self.update_tags_vec(chosen_uuids)
+        self.tags_vec = self.create_tags_vec(chosen_uuids)
         # find similarity_vec according to current attraction
         self.current_similarity_vec(chosen_uuids)
         # similarity_vec = current_similarity_vec(chosen_idx, df_similarity_norm)
@@ -768,8 +784,6 @@ class RouteBulider:
                 self.duration_vec_norm = None
                 self.paid_attrac_vec = None
                 self.availability_vec = None
-                if len(self.chosen_idx) > 0:
-                    self.last_idx = self.chosen_idx[-1]
                 self.sum_duration = 0
                 self.duration_paid_attrac = 0
 

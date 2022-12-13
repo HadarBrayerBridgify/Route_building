@@ -1,6 +1,6 @@
 {
   "CITY": "ny",
-  "PARAMETERS_WEIGHTS": {"popular": 3, "distance": 5, "tags": 1, "price_level": 2},
+  "PARAMETERS_WEIGHTS": {"popular": 0, "distance": 1, "tags": 0, "price_level": 2},
   "USER'S_INTERESTS": ["Museums", "Urban Parks", "Architecture", "Shopping"],
   "USER'S_DATES": ["2022-12-15", "2022-12-15"],
   "DURATION": 7,
